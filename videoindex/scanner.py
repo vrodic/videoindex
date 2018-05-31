@@ -45,7 +45,9 @@ class Scanner:
                              nb_frames integer,
                              creation_time datetime,
                              file_size integer,
-                             sha1 text
+                             sha1 text,
+                             view_count integer,
+                             like integer                            
                              )''')
         self.connection.commit()
 
