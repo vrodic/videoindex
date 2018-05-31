@@ -10,9 +10,14 @@ from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
         if ( isinstance(other, QTableWidgetItem) ):
+            if self.data(Qt.EditRole) == "None":
+                return True
+            if other.data(Qt.EditRole) == "None":
+                return False
 
-            my_value = int(self.data(Qt.EditRole))
-            other_value = int(other.data(Qt.EditRole))
+            my_value = float(self.data(Qt.EditRole))
+            other_value = float(other.data(Qt.EditRole))
+
             return my_value < other_value
 
         return super(NumericTableWidgetItem, self).__lt__(other)
@@ -34,9 +39,14 @@ class Player(QWidget):
 
         self.initUI()
 
-    def play_video(self, media_id, filename, view_count):
+    def play_video(self):
         self.playing = 1
-        os.system('mpv "' + self.root_dir + "/" + filename + '" &')
+        selected_items = self.table.selectedItems()
+        media_id = selected_items[0].text()
+        filename = selected_items[1].text()
+        view_count = selected_items[2].text()
+
+        os.system('mpv "' + self.root_dir + "/" + filename + '" ')
 
         if view_count == 'None':
             view_count = 1
@@ -49,6 +59,8 @@ class Player(QWidget):
                             "WHERE id=?"
                             , sql_metadata)
         self.connection.commit()
+        #self.select_row(1)
+        #self.play_video()
 
 
     def like(self, amount):
@@ -74,9 +86,9 @@ class Player(QWidget):
             self.close()
 
         elif key == Qt.Key_Return:
-            selected_items = self.table.selectedItems()
+
             # print(selectedItems)
-            self.play_video(selected_items[0].text(), selected_items[1].text(), selected_items[2].text())
+            self.play_video()
 
         elif key == Qt.Key_Down:
 
@@ -109,7 +121,7 @@ class Player(QWidget):
 
     def loadItems(self, table):
         table.setSortingEnabled(False)
-        self.cursor.execute("SELECT id,filename,view_count,like,file_size FROM media WHERE filename LIKE ? "
+        self.cursor.execute("SELECT id,filename,view_count,like,file_size, creation_time FROM media WHERE filename LIKE ? "
                             + self.more_conditions , [self.search_expression])
         items = self.cursor.fetchall()
         self.item_count = len(items)
@@ -119,8 +131,9 @@ class Player(QWidget):
             table.setItem(row, 0, QTableWidgetItem(str(item[0])))
             table.setItem(row, 1, QTableWidgetItem(item[1]))
             table.setItem(row, 2, QTableWidgetItem(str(item[2])))
-            table.setItem(row, 3, QTableWidgetItem(str(item[3])))
-            table.setItem(row, 4, NumericTableWidgetItem(str(item[4])))
+            table.setItem(row, 3, NumericTableWidgetItem(str(item[3])))
+            table.setItem(row, 4, NumericTableWidgetItem(str(item[4]/(1024*1024))))
+            table.setItem(row, 5, QTableWidgetItem(str(item[5])))
             row += 1
         table.setSortingEnabled(True)
         self.select_row(0)
@@ -136,7 +149,7 @@ class Player(QWidget):
         table =  self.table
         searchEdit.textChanged.connect(self.setSearchTerm)
 
-        table.setColumnCount(5)
+        table.setColumnCount(6)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         header = table.horizontalHeader()
         header.sortIndicatorOrder()
