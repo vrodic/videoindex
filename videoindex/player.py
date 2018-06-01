@@ -33,7 +33,8 @@ class Player(QWidget):
         self.item_count = 0
         self.search_expression = "%%"
         self.playing = 0
-        self.more_conditions = " AND filename NOT LIKE '%.jpg' ";
+        self.more_conditions = " AND filename NOT LIKE '%.jpg' "
+        self.order = " ORDER by view_count ASC, file_size DESC"
 
         super().__init__()
 
@@ -46,8 +47,12 @@ class Player(QWidget):
         filename = selected_items[1].text()
         view_count = selected_items[2].text()
 
-        os.system('mpv "' + self.root_dir + "/" + filename + '" ')
+        os.system('mpv "' + self.root_dir + "/" + filename + '" &')
+        current_row = self.table.selectedIndexes()[0].row()
+        nextFile = self.table.item(current_row+1,1)
 
+        os.system('killall cat')
+        os.system('cat "' + self.root_dir + "/" + nextFile.text() + '" >& /dev/null &')
         if view_count == 'None':
             view_count = 1
         else:
@@ -77,12 +82,13 @@ class Player(QWidget):
         self.cursor.execute("UPDATE media SET like=?"
                             "WHERE id=?"
                             , sql_metadata)
-        self.connection.commit()
+
 
     def keyPressEvent(self, e):
         key = e.key()
 
         if key == Qt.Key_Escape:
+            self.connection.commit()
             self.close()
 
         elif key == Qt.Key_Return:
@@ -122,7 +128,7 @@ class Player(QWidget):
     def loadItems(self, table):
         table.setSortingEnabled(False)
         self.cursor.execute("SELECT id,filename,view_count,like,file_size, creation_time FROM media WHERE filename LIKE ? "
-                            + self.more_conditions , [self.search_expression])
+                            + self.more_conditions + " " + self.order, [self.search_expression])
         items = self.cursor.fetchall()
         self.item_count = len(items)
         table.setRowCount(self.item_count)
