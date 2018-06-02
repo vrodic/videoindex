@@ -34,8 +34,8 @@ class Player(QWidget):
         self.search_expression = "%%"
         self.playing = 0
         self.more_conditions = " AND filename NOT LIKE '%.jpg' "
-        self.order = " ORDER by view_count ASC, file_size DESC"
-
+        # self.order = " ORDER by view_count ASC, file_size DESC"
+        self.order = " AND codec_name <> 'mjpeg' ORDER by view_count ASC, width DESC, file_size DESC"
         super().__init__()
 
         self.initUI()
@@ -47,12 +47,14 @@ class Player(QWidget):
         filename = selected_items[1].text()
         view_count = selected_items[2].text()
 
-        os.system('mpv "' + self.root_dir + "/" + filename + '" &')
+        os.system('mpv -fs "' + self.root_dir + "/" + filename + '" &')
         current_row = self.table.selectedIndexes()[0].row()
         nextFile = self.table.item(current_row+1,1)
 
+        # pre-caching
         os.system('killall cat')
         os.system('cat "' + self.root_dir + "/" + nextFile.text() + '" >& /dev/null &')
+
         if view_count == 'None':
             view_count = 1
         else:
@@ -127,8 +129,10 @@ class Player(QWidget):
 
     def loadItems(self, table):
         table.setSortingEnabled(False)
-        self.cursor.execute("SELECT id,filename,view_count,like,file_size, creation_time FROM media WHERE filename LIKE ? "
-                            + self.more_conditions + " " + self.order, [self.search_expression])
+        self.cursor.execute(
+            "SELECT id,filename,view_count,like,file_size, creation_time,width FROM media WHERE filename LIKE ? "
+            + self.more_conditions + " " + self.order, [self.search_expression]
+        )
         items = self.cursor.fetchall()
         self.item_count = len(items)
         table.setRowCount(self.item_count)
@@ -140,6 +144,7 @@ class Player(QWidget):
             table.setItem(row, 3, NumericTableWidgetItem(str(item[3])))
             table.setItem(row, 4, NumericTableWidgetItem(str(item[4]/(1024*1024))))
             table.setItem(row, 5, QTableWidgetItem(str(item[5])))
+            table.setItem(row, 6, NumericTableWidgetItem(str(item[6])))
             row += 1
         table.setSortingEnabled(True)
         self.select_row(0)
@@ -155,7 +160,7 @@ class Player(QWidget):
         table =  self.table
         searchEdit.textChanged.connect(self.setSearchTerm)
 
-        table.setColumnCount(6)
+        table.setColumnCount(7)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         header = table.horizontalHeader()
         header.sortIndicatorOrder()
