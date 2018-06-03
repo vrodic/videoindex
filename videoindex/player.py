@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import sqlite3
 import sys
 import os
@@ -5,7 +7,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
                              QTextEdit, QGridLayout, QApplication, QListWidget, QTableWidget, QTableWidgetItem,
                              QAbstractItemView, QHeaderView)
-
+from shlex import quote
 
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
@@ -47,13 +49,16 @@ class Player(QWidget):
         filename = selected_items[1].text()
         view_count = selected_items[2].text()
 
-        os.system('mpv -fs "' + self.root_dir + "/" + filename + '" &')
+        full_path = self.root_dir + "/" + filename
+
+        os.system('mpv -fs {} &'.format(quote(full_path)))
         current_row = self.table.selectedIndexes()[0].row()
-        nextFile = self.table.item(current_row+1,1)
+        nextFile = self.table.item(current_row+1, 1)
 
         # pre-caching
-        os.system('killall cat')
-        os.system('cat "' + self.root_dir + "/" + nextFile.text() + '" >& /dev/null &')
+        if nextFile:
+            os.system('killall cat')
+            os.system('cat {} >& /dev/null &'.format(quote(self.root_dir + "/" + nextFile.text())))
 
         if view_count == 'None':
             view_count = 1
