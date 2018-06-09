@@ -24,6 +24,7 @@ class NumericTableWidgetItem(QTableWidgetItem):
 
         return super(NumericTableWidgetItem, self).__lt__(other)
 
+
 class Player(QWidget):
 
     def __init__(self,root_dir):
@@ -40,7 +41,7 @@ class Player(QWidget):
         self.order = " AND codec_name <> 'mjpeg' ORDER by view_count ASC, width DESC, file_size DESC"
         super().__init__()
 
-        self.initUI()
+        self.init_ui()
 
     def play_video(self):
         self.playing = 1
@@ -74,10 +75,10 @@ class Player(QWidget):
         #self.select_row(1)
         #self.play_video()
 
-
     def like(self, amount):
         selected_items = self.table.selectedItems()
-
+        if not selected_items:
+            return
         like = selected_items[3].text()
         if like == 'None':
             like = amount
@@ -90,6 +91,24 @@ class Player(QWidget):
                             "WHERE id=?"
                             , sql_metadata)
 
+    def delete(self):
+        selected_items = self.table.selectedItems()
+        like = selected_items[3].text()
+        if int(like) > 0:
+            return
+
+        current_row = self.table.selectedIndexes()[0].row()
+        media_id = selected_items[0].text()
+        filename = selected_items[1].text()
+        full_path = self.root_dir + "/" + filename
+        os.remove(full_path)
+        sql_metadata = [media_id]
+        self.cursor.execute("DELETE FROM  media "
+                            "WHERE id=?"
+                            , sql_metadata)
+        #self.connection.commit()
+        self.table.removeRow(current_row)
+        self.table.selectRow(current_row + 1)
 
     def keyPressEvent(self, e):
         key = e.key()
@@ -116,12 +135,13 @@ class Player(QWidget):
 
             self.select_row(1)
 
-
         elif key == Qt.Key_Control:
             self.like(-1)
 
             self.select_row(1)
 
+        elif key == Qt.Key_Delete:
+            self.delete()
 
     def select_row(self, amount):
         try:
@@ -131,11 +151,10 @@ class Player(QWidget):
         else:
             self.table.selectRow(current_row + amount)
 
-
-    def loadItems(self, table):
+    def load_items(self, table):
         table.setSortingEnabled(False)
         self.cursor.execute(
-            "SELECT id,filename,view_count,like,file_size, creation_time,width FROM media WHERE filename LIKE ? "
+            "SELECT id,filename,view_count,like,file_size, creation_time,width,file_size/duration FROM media WHERE filename LIKE ? "
             + self.more_conditions + " " + self.order, [self.search_expression]
         )
         items = self.cursor.fetchall()
@@ -150,30 +169,29 @@ class Player(QWidget):
             table.setItem(row, 4, NumericTableWidgetItem(str(item[4]/(1024*1024))))
             table.setItem(row, 5, QTableWidgetItem(str(item[5])))
             table.setItem(row, 6, NumericTableWidgetItem(str(item[6])))
+            table.setItem(row, 7, NumericTableWidgetItem(str(item[7])))
             row += 1
         table.setSortingEnabled(True)
         self.select_row(0)
 
-    def setSearchTerm(self, term):
+    def set_search_term(self, term):
         self.search_expression = "%"+term+"%"
         self.table.setRowCount(0)
-        self.loadItems(self.table)
+        self.load_items(self.table)
 
-
-    def initUI(self):
+    def init_ui(self):
         searchEdit = QLineEdit()
         table =  self.table
-        searchEdit.textChanged.connect(self.setSearchTerm)
+        searchEdit.textChanged.connect(self.set_search_term)
 
-        table.setColumnCount(7)
+        table.setColumnCount(8)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         header = table.horizontalHeader()
         header.sortIndicatorOrder()
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         table.setHorizontalHeaderLabels(['id','filename','views','likes','size'])
 
-
-        self.loadItems(table)
+        self.load_items(table)
 
         grid = QGridLayout()
         grid.setSpacing(10)
