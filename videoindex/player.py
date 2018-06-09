@@ -94,7 +94,8 @@ class Player(QWidget):
     def delete(self):
         selected_items = self.table.selectedItems()
         like = selected_items[3].text()
-        if int(like) > 0:
+        if isinstance(like, int) and int(like) > 0:
+            print("cant delete liked    ")
             return
 
         current_row = self.table.selectedIndexes()[0].row()
@@ -108,7 +109,7 @@ class Player(QWidget):
                             , sql_metadata)
         #self.connection.commit()
         self.table.removeRow(current_row)
-        self.table.selectRow(current_row + 1)
+        self.table.selectRow(current_row)
 
     def keyPressEvent(self, e):
         key = e.key()
