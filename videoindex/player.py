@@ -102,6 +102,7 @@ class Player(QWidget):
         media_id = selected_items[0].text()
         filename = selected_items[1].text()
         full_path = self.root_dir + "/" + filename
+        print("deleting " + full_path)
         os.remove(full_path)
         sql_metadata = [media_id]
         self.cursor.execute("DELETE FROM  media "
