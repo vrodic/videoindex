@@ -168,7 +168,7 @@ class Player(QWidget):
         table.setRowCount(self.item_count)
         row = 0
         for item in items:
-            table.setItem(row, 0, QTableWidgetItem(str(item[0])))
+            table.setItem(row, 0, NumericTableWidgetItem(str(item[0])))
             table.setItem(row, 1, QTableWidgetItem(item[1]))
             table.setItem(row, 2, QTableWidgetItem(str(item[2])))
             table.setItem(row, 3, NumericTableWidgetItem(str(item[3])))
