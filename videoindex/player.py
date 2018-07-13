@@ -17,8 +17,11 @@ class NumericTableWidgetItem(QTableWidgetItem):
             if other.data(Qt.EditRole) == "None":
                 return False
 
-            my_value = float(self.data(Qt.EditRole))
-            other_value = float(other.data(Qt.EditRole))
+            try:
+                my_value = float(self.data(Qt.EditRole))
+                other_value = float(other.data(Qt.EditRole))
+            except:
+                return False
 
             return my_value < other_value
 
