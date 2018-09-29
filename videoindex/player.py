@@ -9,9 +9,10 @@ from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
                              QAbstractItemView, QHeaderView)
 from shlex import quote
 
+
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
-        if ( isinstance(other, QTableWidgetItem) ):
+        if (isinstance(other, QTableWidgetItem)):
             if self.data(Qt.EditRole) == "None":
                 return True
             if other.data(Qt.EditRole) == "None":
@@ -30,7 +31,7 @@ class NumericTableWidgetItem(QTableWidgetItem):
 
 class Player(QWidget):
 
-    def __init__(self,root_dir):
+    def __init__(self, root_dir):
         self.root_dir = root_dir
         self.connection = sqlite3.connect(root_dir + '/videoindex.db')
         self.cursor = self.connection.cursor()
@@ -39,9 +40,17 @@ class Player(QWidget):
         self.item_count = 0
         self.search_expression = "%%"
         self.playing = 0
-        self.more_conditions = " AND filename NOT LIKE '%.jpg' "
+        self.more_conditions = \
+            " AND filename NOT LIKE '%.jpg' AND codec_name <> 'mjpeg' " \
+            " AND filename NOT LIKE '%.unwanted%' AND filename NOT LIKE '%SMP-B9R%' " \
+            " AND filename NOT LIKE '%SAMPLE-B9R%'"
+        self.deduplicate_by_nb_frames = \
+            " AND duration IN (select duration from media where duration > 60 group by 1 having count(*) > 1 ) " \
+            " AND nb_frames IN (select nb_frames from media where duration > 60 group by 1 having count(*) > 1 ) "
+        self.deduplicate_by_nb_frames = ''
         # self.order = " ORDER by view_count ASC, file_size DESC"
-        self.order = " AND codec_name <> 'mjpeg' ORDER by view_count ASC, width DESC, file_size DESC"
+        self.order = " ORDER by view_count ASC, file_size DESC"
+        # self.order = " ORDER by duration DESC"
         super().__init__()
 
         self.init_ui()
@@ -57,7 +66,7 @@ class Player(QWidget):
 
         os.system('mpv -fs {} &'.format(quote(full_path)))
         current_row = self.table.selectedIndexes()[0].row()
-        nextFile = self.table.item(current_row+1, 1)
+        nextFile = self.table.item(current_row + 1, 1)
 
         # pre-caching
         if nextFile:
@@ -75,8 +84,8 @@ class Player(QWidget):
                             "WHERE id=?"
                             , sql_metadata)
         self.connection.commit()
-        #self.select_row(1)
-        #self.play_video()
+        # self.select_row(1)
+        # self.play_video()
 
     def like(self, amount):
         selected_items = self.table.selectedItems()
@@ -94,10 +103,17 @@ class Player(QWidget):
                             "WHERE id=?"
                             , sql_metadata)
 
+    def is_number(self, s):
+        try:
+            int(s)
+            return True
+        except ValueError:
+            return False
+
     def delete(self):
         selected_items = self.table.selectedItems()
         like = selected_items[3].text()
-        if isinstance(like, int) and int(like) > 0:
+        if self.is_number(like) and int(like) > 0:
             print("cant delete liked    ")
             return
 
@@ -115,7 +131,7 @@ class Player(QWidget):
         self.cursor.execute("DELETE FROM  media "
                             "WHERE id=?"
                             , sql_metadata)
-        #self.connection.commit()
+        # self.connection.commit()
         self.table.removeRow(current_row)
         self.table.selectRow(current_row)
 
@@ -154,7 +170,7 @@ class Player(QWidget):
 
     def select_row(self, amount):
         try:
-         current_row = self.table.selectedIndexes()[0].row()
+            current_row = self.table.selectedIndexes()[0].row()
         except Exception as ex:
             self.table.selectRow(0)
         else:
@@ -162,9 +178,12 @@ class Player(QWidget):
 
     def load_items(self, table):
         table.setSortingEnabled(False)
+        query = "SELECT id,filename,view_count,like,file_size, creation_time,width,file_size/duration FROM media WHERE filename LIKE ? " \
+                + self.more_conditions + " " + self.deduplicate_by_nb_frames + " " + self.order
+
+        print(query)
         self.cursor.execute(
-            "SELECT id,filename,view_count,like,file_size, creation_time,width,file_size/duration FROM media WHERE filename LIKE ? "
-            + self.more_conditions + " " + self.order, [self.search_expression]
+            query, [self.search_expression]
         )
         items = self.cursor.fetchall()
         self.item_count = len(items)
@@ -175,7 +194,7 @@ class Player(QWidget):
             table.setItem(row, 1, QTableWidgetItem(item[1]))
             table.setItem(row, 2, QTableWidgetItem(str(item[2])))
             table.setItem(row, 3, NumericTableWidgetItem(str(item[3])))
-            table.setItem(row, 4, NumericTableWidgetItem(str(item[4]/(1024*1024))))
+            table.setItem(row, 4, NumericTableWidgetItem(str(item[4] / (1024 * 1024))))
             table.setItem(row, 5, QTableWidgetItem(str(item[5])))
             table.setItem(row, 6, NumericTableWidgetItem(str(item[6])))
             table.setItem(row, 7, NumericTableWidgetItem(str(item[7])))
@@ -184,13 +203,13 @@ class Player(QWidget):
         self.select_row(0)
 
     def set_search_term(self, term):
-        self.search_expression = "%"+term+"%"
+        self.search_expression = "%" + term + "%"
         self.table.setRowCount(0)
         self.load_items(self.table)
 
     def init_ui(self):
         searchEdit = QLineEdit()
-        table =  self.table
+        table = self.table
         searchEdit.textChanged.connect(self.set_search_term)
 
         table.setColumnCount(8)
@@ -198,7 +217,7 @@ class Player(QWidget):
         header = table.horizontalHeader()
         header.sortIndicatorOrder()
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        table.setHorizontalHeaderLabels(['id','filename','views','likes','size'])
+        table.setHorizontalHeaderLabels(['id', 'filename', 'views', 'likes', 'size'])
 
         self.load_items(table)
 
@@ -218,4 +237,3 @@ if __name__ == '__main__':
 
     ex = Player(sys.argv[1])
     sys.exit(app.exec_())
-

@@ -72,7 +72,7 @@ class Scanner:
 
         try:
             metadata = ffmpeg.probe(fname)
-        except ffmpeg.ProbeException as _:
+        except:
             self.error_probing += 1
             return
         else:
