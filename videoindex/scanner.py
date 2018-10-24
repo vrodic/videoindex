@@ -32,9 +32,9 @@ class Scanner:
                 sha1.update(data)
         return sha1.hexdigest()
 
-    def __init__(self,root_dir):
+    def __init__(self,root_dir, db_file):
         self.root_dir = root_dir
-        self.connection = sqlite3.connect(root_dir + '/videoindex.db')
+        self.connection = sqlite3.connect(db_file)
         self.cursor = self.connection.cursor()
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS media
                              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -130,5 +130,5 @@ class Scanner:
         print("Added: " + str(self.added))
 
 
-scanner = Scanner(sys.argv[1])
+scanner = Scanner(sys.argv[1], sys.argv[2])
 scanner.scan()

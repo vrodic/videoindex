@@ -31,9 +31,9 @@ class NumericTableWidgetItem(QTableWidgetItem):
 
 class Player(QWidget):
 
-    def __init__(self, root_dir):
+    def __init__(self, root_dir, index_file):
         self.root_dir = root_dir
-        self.connection = sqlite3.connect(root_dir + '/videoindex.db')
+        self.connection = sqlite3.connect(index_file)
         self.cursor = self.connection.cursor()
         self.table = QTableWidget()
 
@@ -235,5 +235,5 @@ class Player(QWidget):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
 
-    ex = Player(sys.argv[1])
+    ex = Player(sys.argv[1], sys.argv[2])
     sys.exit(app.exec_())
