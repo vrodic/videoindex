@@ -39,6 +39,7 @@ class Player(QWidget):
 
         self.item_count = 0
         self.search_expression = "%%"
+        
         self.playing = 0
         self.more_conditions = \
             " AND filename NOT LIKE '%.jpg' AND codec_name <> 'mjpeg' " \
@@ -50,6 +51,7 @@ class Player(QWidget):
         self.deduplicate_by_nb_frames = ''
         # self.order = " ORDER by view_count ASC, file_size DESC"
         self.order = " ORDER by view_count ASC, file_size DESC"
+        self.condition_expression = self.order
         # self.order = " ORDER by duration DESC"
         super().__init__()
 
@@ -113,15 +115,17 @@ class Player(QWidget):
     def delete(self):
         selected_items = self.table.selectedItems()
         like = selected_items[3].text()
-        if self.is_number(like) and int(like) > 0:
-            print("cant delete liked    ")
-            return
+        
+        if self.is_number(like) and int(like) >= 0:
+            print("can t delete liked    ")
+            return False
 
         current_row = self.table.selectedIndexes()[0].row()
         media_id = selected_items[0].text()
         filename = selected_items[1].text()
         full_path = self.root_dir + "/" + filename
         print("deleting " + full_path)
+        
         try:
             os.remove(full_path)
         except Exception as ex:
@@ -134,6 +138,7 @@ class Player(QWidget):
         # self.connection.commit()
         self.table.removeRow(current_row)
         self.table.selectRow(current_row)
+        return True
 
     def keyPressEvent(self, e):
         key = e.key()
@@ -155,18 +160,16 @@ class Player(QWidget):
 
             self.select_row(-1)
 
-        elif key == Qt.Key_Shift:
+        elif key == Qt.Key_Insert:
             self.like(1)
 
             self.select_row(1)
 
-        elif key == Qt.Key_Control:
-            self.like(-1)
-
-            self.select_row(1)
-
         elif key == Qt.Key_Delete:
-            self.delete()
+            self.like(-1)
+            if self.delete():
+                return
+            self.select_row(1)
 
     def select_row(self, amount):
         try:
@@ -178,8 +181,11 @@ class Player(QWidget):
 
     def load_items(self, table):
         table.setSortingEnabled(False)
-        query = "SELECT id,filename,view_count,like,file_size, creation_time,width,file_size/duration FROM media WHERE filename LIKE ? " \
-                + self.more_conditions + " " + self.deduplicate_by_nb_frames + " " + self.order
+        query = "SELECT id,filename,view_count,like,file_size, creation_time,width,file_size/(duration*width) FROM media " \
+                "WHERE filename LIKE ? " \
+                + self.more_conditions + " " + self.deduplicate_by_nb_frames + " "\
+                + self.condition_expression
+                
 
         print(query)
         self.cursor.execute(
@@ -194,10 +200,10 @@ class Player(QWidget):
             table.setItem(row, 1, QTableWidgetItem(item[1]))
             table.setItem(row, 2, QTableWidgetItem(str(item[2])))
             table.setItem(row, 3, NumericTableWidgetItem(str(item[3])))
-            table.setItem(row, 4, NumericTableWidgetItem(str(item[4] / (1024 * 1024))))
+            table.setItem(row, 4, NumericTableWidgetItem(str(round(item[4] / (1024 * 1024)))))
             table.setItem(row, 5, QTableWidgetItem(str(item[5])))
             table.setItem(row, 6, NumericTableWidgetItem(str(item[6])))
-            table.setItem(row, 7, NumericTableWidgetItem(str(item[7])))
+            table.setItem(row, 7, NumericTableWidgetItem(str(round(item[7]))))
             row += 1
         table.setSortingEnabled(True)
         self.select_row(0)
@@ -207,10 +213,22 @@ class Player(QWidget):
         self.table.setRowCount(0)
         self.load_items(self.table)
 
+    def set_condition_term(self, term):
+        self.condition_expression = term        
+        try:
+            self.load_items(self.table)    
+        except:
+            return                 
+
     def init_ui(self):
-        searchEdit = QLineEdit()
         table = self.table
+
+        searchEdit = QLineEdit()        
         searchEdit.textChanged.connect(self.set_search_term)
+
+        conditionEdit = QLineEdit() 
+        conditionEdit.setText(self.order)
+        conditionEdit.textChanged.connect(self.set_condition_term)
 
         table.setColumnCount(8)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -224,8 +242,9 @@ class Player(QWidget):
         grid = QGridLayout()
         grid.setSpacing(10)
         grid.addWidget(searchEdit, 2, 0)
-        grid.addWidget(table, 1, 0)
 
+        grid.addWidget(table, 1, 0)
+        grid.addWidget(conditionEdit, 3, 0)
         self.setLayout(grid)
         self.setGeometry(0, 0, 1550, 1000)
         self.setWindowTitle('videoindex')
