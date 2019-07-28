@@ -116,7 +116,7 @@ class Player(QWidget):
         selected_items = self.table.selectedItems()
         like = selected_items[3].text()
         
-        if self.is_number(like) and int(like) >= 0:
+        if self.is_number(like) and int(like) >= -1:
             print("can t delete liked    ")
             return False
 
