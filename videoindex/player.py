@@ -71,9 +71,9 @@ class Player(QWidget):
         nextFile = self.table.item(current_row + 1, 1)
 
         # pre-caching
-        if nextFile:
-            os.system('killall cat')
-            os.system('cat {} >& /dev/null &'.format(quote(self.root_dir + "/" + nextFile.text())))
+        #if nextFile:
+        #    os.system('killall cat')
+        #    os.system('cat {} >& /dev/null &'.format(quote(self.root_dir + "/" + nextFile.text())))
 
         if view_count == 'None':
             view_count = 1
