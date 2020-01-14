@@ -51,8 +51,10 @@ class Player(QWidget):
         self.deduplicate_by_nb_frames = ''
         # self.order = " ORDER by view_count ASC, file_size DESC"
         self.order = " ORDER by view_count ASC, file_size DESC"
+        self.order = "  and like > 2 ORDER by random()"
         self.condition_expression = self.order
         # self.order = " ORDER by duration DESC"
+        
         super().__init__()
 
         self.init_ui()
@@ -198,7 +200,7 @@ class Player(QWidget):
         for item in items:
             table.setItem(row, 0, NumericTableWidgetItem(str(item[0])))
             table.setItem(row, 1, QTableWidgetItem(item[1]))
-            table.setItem(row, 2, QTableWidgetItem(str(item[2])))
+            table.setItem(row, 2, NumericTableWidgetItem(str(item[2])))
             table.setItem(row, 3, NumericTableWidgetItem(str(item[3])))
             table.setItem(row, 4, NumericTableWidgetItem(str(round(item[4] / (1024 * 1024)))))
             table.setItem(row, 5, QTableWidgetItem(str(item[5])))
