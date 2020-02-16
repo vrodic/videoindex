@@ -68,7 +68,7 @@ class Player(QWidget):
 
         full_path = self.root_dir + "/" + filename
 
-        os.system('mpv -fs {} &'.format(quote(full_path)))
+        os.system('mpv -fs  {} &'.format(quote(full_path)))
         current_row = self.table.selectedIndexes()[0].row()
         nextFile = self.table.item(current_row + 1, 1)
 
@@ -84,7 +84,7 @@ class Player(QWidget):
         self.table.setItem(self.table.selectedIndexes()[0].row(), 2, QTableWidgetItem(str(view_count)))
 
         sql_metadata = [view_count, media_id]
-        self.cursor.execute("UPDATE media SET view_count=?"
+        self.cursor.execute("UPDATE media SET view_count=?, viewed_time=datetime('now') "
                             "WHERE id=?"
                             , sql_metadata)
         self.connection.commit()

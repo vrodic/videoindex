@@ -48,7 +48,8 @@ class Scanner:
                              file_size integer,
                              sha1 text,
                              view_count integer,
-                             like integer                            
+                             like integer,
+                             viewed_time datetime                       
                              )''')
         self.connection.commit()
 
