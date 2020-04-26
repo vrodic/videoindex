@@ -51,7 +51,7 @@ class Player(QWidget):
         self.deduplicate_by_nb_frames = ''
         # self.order = " ORDER by view_count ASC, file_size DESC"
         self.order = " ORDER by view_count ASC, file_size DESC"
-        self.order = "  and like > 2 ORDER by random()"
+        self.order = "  and like > 2 ORDER by viewed_time, random()"
         self.condition_expression = self.order
         # self.order = " ORDER by duration DESC"
         
@@ -183,7 +183,7 @@ class Player(QWidget):
 
     def load_items(self, table):
         table.setSortingEnabled(False)
-        query = "SELECT id,filename,view_count,like,file_size, creation_time,width,file_size/(duration*width) FROM media " \
+        query = "SELECT id,filename,view_count,like,file_size, viewed_time,width,file_size/(duration*width) FROM media " \
                 "WHERE filename LIKE ? " \
                 + self.more_conditions + " " + self.deduplicate_by_nb_frames + " "\
                 + self.condition_expression
@@ -196,6 +196,7 @@ class Player(QWidget):
         items = self.cursor.fetchall()
         self.item_count = len(items)
         table.setRowCount(self.item_count)
+        print (self.item_count)
         row = 0
         for item in items:
             table.setItem(row, 0, NumericTableWidgetItem(str(item[0])))
@@ -205,9 +206,11 @@ class Player(QWidget):
             table.setItem(row, 4, NumericTableWidgetItem(str(round(item[4] / (1024 * 1024)))))
             table.setItem(row, 5, QTableWidgetItem(str(item[5])))
             table.setItem(row, 6, NumericTableWidgetItem(str(item[6])))
-            table.setItem(row, 7, NumericTableWidgetItem(str(round(item[7]))))
+            if item[7]:
+                table.setItem(row, 7, NumericTableWidgetItem(str(round(item[7]))))
             row += 1
         table.setSortingEnabled(True)
+        
         self.select_row(0)
 
     def set_search_term(self, term):
