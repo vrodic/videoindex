@@ -66,9 +66,9 @@ class Player(QWidget):
         filename = selected_items[1].text()
         view_count = selected_items[2].text()
 
-        full_path = self.root_dir + "/" + filename
-
-        os.system('mpv -fs  {} &'.format(quote(full_path)))
+        full_path = os.path.normpath(self.root_dir + "/" + filename)
+        #full_path = full_path.replace('/','\\').replace(' ','\ ')
+        os.system('C:\\mpv\\mpv -fs  "{}" '.format(full_path))
         current_row = self.table.selectedIndexes()[0].row()
         nextFile = self.table.item(current_row + 1, 1)
 
