@@ -3,8 +3,8 @@
 import sqlite3
 import sys
 import os
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (QWidget, QLabel, QLineEdit,
                              QTextEdit, QGridLayout, QApplication, QListWidget, QTableWidget, QTableWidgetItem,
                              QAbstractItemView, QHeaderView)
 from shlex import quote
@@ -68,7 +68,7 @@ class Player(QWidget):
 
         full_path = self.root_dir + "/" + filename
 
-        os.system('mpv -fs  {} &'.format(quote(full_path)))
+        os.system('mpv  {} &'.format(quote(full_path)))
         current_row = self.table.selectedIndexes()[0].row()
         nextFile = self.table.item(current_row + 1, 1)
 
@@ -145,29 +145,29 @@ class Player(QWidget):
     def keyPressEvent(self, e):
         key = e.key()
 
-        if key == Qt.Key_Escape:
+        if key == Qt.Key.Key_Escape:
             self.connection.commit()
             self.close()
 
-        elif key == Qt.Key_Return:
+        elif key == Qt.Key.Key_Return:
 
             # print(selectedItems)
             self.play_video()
 
-        elif key == Qt.Key_Down:
+        elif key == Qt.Key.Key_Down:
 
             self.select_row(1)
 
-        elif key == Qt.Key_Up:
+        elif key == Qt.Key.Key_Up:
 
             self.select_row(-1)
 
-        elif key == Qt.Key_Insert:
+        elif key == Qt.Key.Key_Insert:
             self.like(1)
 
             self.select_row(1)
 
-        elif key == Qt.Key_Delete:
+        elif key == Qt.Key.Key_Delete:
             self.like(-1)
             if self.delete():
                 return
@@ -236,10 +236,10 @@ class Player(QWidget):
         conditionEdit.textChanged.connect(self.set_condition_term)
 
         table.setColumnCount(8)
-        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         header = table.horizontalHeader()
         header.sortIndicatorOrder()
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         table.setHorizontalHeaderLabels(['id', 'filename', 'views', 'likes', 'size'])
 
         self.load_items(table)
@@ -260,4 +260,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
 
     ex = Player(sys.argv[1], sys.argv[2])
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
