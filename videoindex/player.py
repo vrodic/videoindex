@@ -83,8 +83,8 @@ class Player(QWidget):
         self.items[row] = list(self.items[row])
         self.items[row][column] = value
 
-        self.set_model()
-        self.table.selectRow(row)
+        index = self.table.model().mapFromSource(self.model.createIndex(row, column))
+        self.table.model().dataChanged.emit(index, index)
 
     def set_model(self):
         self.model = TableModel(self.items)
@@ -95,7 +95,7 @@ class Player(QWidget):
    
     def play_video(self):
         self.playing = 1
-        current_row = self.table.selectionModel().selectedRows()[0].row();
+        current_row = self.table.model().mapToSource(self.table.currentIndex()).row()
         selected_row = self.items[current_row]
         
         media_id = selected_row[0]
@@ -118,7 +118,7 @@ class Player(QWidget):
             view_count = 1
         else:
             view_count = int(view_count) + 1
-        
+
         self.set_data(current_row, 2, view_count)
 
         sql_metadata = [view_count, media_id]
@@ -128,7 +128,7 @@ class Player(QWidget):
         self.connection.commit()  
 
     def like(self, amount):        
-        current_row = self.table.selectionModel().selectedRows()[0].row();
+        current_row = self.table.model().mapToSource(self.table.currentIndex()).row()
         selected_row = self.items[current_row]
 
         if not selected_row:
@@ -154,7 +154,7 @@ class Player(QWidget):
             return False
 
     def delete(self):
-        current_row = self.table.selectionModel().selectedRows()[0].row();
+        current_row = self.table.model().mapToSource(self.table.currentIndex()).row()
         selected_row = self.items[current_row]
         like = selected_row[3]
         
@@ -179,8 +179,14 @@ class Player(QWidget):
                             , sql_metadata)
         # self.connection.commit()        
         del self.items[current_row]
-        self.set_model()
-        self.table.selectRow(current_row)
+
+
+        index = self.table.model().mapFromSource(self.model.createIndex(current_row, 0))
+        
+        self.table.model().dataChanged.emit(index,
+                        self.table.model().createIndex(self.table.model().rowCount(),self.table.model().columnCount()))
+        
+ 
         return True
 
     def keyPressEvent(self, e):
@@ -222,7 +228,8 @@ class Player(QWidget):
         else:
             self.table.selectRow(current_row + amount)
 
-    def load_items(self, table):                
+    def load_items(self, table):     
+        self.table.setSortingEnabled(False)           
         query = "SELECT id,filename,view_count,like,file_size, viewed_time,width,file_size/(duration*width) FROM media " \
                 "WHERE filename LIKE ? " \
                 + self.more_conditions + " " + self.deduplicate_by_nb_frames + " "\
@@ -234,7 +241,7 @@ class Player(QWidget):
             query, [self.search_expression]
         )
         self.items = list(self.cursor.fetchall())        
-        
+        #self.table.setSortingEnabled(True)
         self.set_model()
 
         header = table.horizontalHeader()
@@ -243,6 +250,7 @@ class Player(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)             
         
         self.select_row(0)
+        
 
     def set_search_term(self, term):
         self.search_expression = "%" + term + "%"
