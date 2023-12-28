@@ -3,8 +3,9 @@
 import sqlite3
 import sys
 import os
+from PyQt6 import QtCore
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QWidget, QLabel, QLineEdit,
+from PyQt6.QtWidgets import (QTableView, QWidget, QLabel, QLineEdit,
                              QTextEdit, QGridLayout, QApplication, QListWidget, QTableWidget, QTableWidgetItem,
                              QAbstractItemView, QHeaderView)
 from shlex import quote
@@ -28,6 +29,48 @@ class NumericTableWidgetItem(QTableWidgetItem):
 
         return super(NumericTableWidgetItem, self).__lt__(other)
 
+class TableModel(QtCore.QAbstractTableModel):
+    def __init__(self, data):
+        super(TableModel, self).__init__()
+        
+        self.hheaders = ['id', 'filename', 'views', 'likes', 'size', '', '','']
+        self._data = data
+
+    def data(self, index, role):
+        if role == Qt.ItemDataRole.DisplayRole:
+            # See below for the nested-list data structure.
+            # .row() indexes into the outer list,
+            # .column() indexes into the sub-list
+            return self._data[index.row()][index.column()]
+
+    def rowCount(self, index):
+        # The length of the outer list.
+        return len(self._data)
+
+    def allData(self):
+        return self._data
+
+    def columnCount(self, index):
+        # The following takes the first sub-list, and returns
+        # the length (only works if all rows are an equal length)
+        if len(self._data) == 0:
+            return 0 
+        return len(self._data[0])
+    
+    def deleteRow(self, row):        
+        del self._data[row]
+        self.dataChanged.emit(self.createIndex(row,0),
+                        self.createIndex(self.rowCount(None),self.columnCount(None)))
+
+    def headerData(self, section, orientation, role):           # <<<<<<<<<<<<<<< NEW DEF
+        # row and column headers
+        if role == Qt.ItemDataRole.DisplayRole:
+            if orientation == Qt.Orientation.Horizontal:
+                print(section)
+                return self.hheaders[section]
+        return QtCore.QVariant()                        
+
+
 
 class Player(QWidget):
 
@@ -35,7 +78,9 @@ class Player(QWidget):
         self.root_dir = root_dir
         self.connection = sqlite3.connect(index_file)
         self.cursor = self.connection.cursor()
-        self.table = QTableWidget()
+
+        
+        self.table = QTableView()
 
         self.item_count = 0
         self.search_expression = "%%"
@@ -59,51 +104,63 @@ class Player(QWidget):
 
         self.init_ui()
 
+    def set_data(self, row, column, value):
+        self.items[row] = list(self.items[row])
+        self.items[row][column] = value
+
+        index = self.table.model().createIndex(row, column)
+        self.table.model().dataChanged.emit(index, index)
+
+   
     def play_video(self):
         self.playing = 1
-        selected_items = self.table.selectedItems()
-        media_id = selected_items[0].text()
-        filename = selected_items[1].text()
-        view_count = selected_items[2].text()
+        current_row = self.table.selectionModel().selectedRows()[0].row();
+        selected_row = self.items[current_row]
+        
+        media_id = selected_row[0]
+        filename = selected_row[1]
+        view_count = selected_row[2]
 
         full_path = self.root_dir + "/" + filename
 
         os.system('mpv  {} &'.format(quote(full_path)))
+                
         
-        current_row = self.table.selectedIndexes()[0].row()
-        nextFile = self.table.item(current_row + 1, 1)
 
         # pre-caching
+        #nextFile = self.table.item(current_row + 1, 1)
         #if nextFile:
         #    os.system('killall cat')
         #    os.system('cat {} >& /dev/null &'.format(quote(self.root_dir + "/" + nextFile.text())))
 
-        if view_count == 'None':
+        if view_count is None:
             view_count = 1
         else:
             view_count = int(view_count) + 1
-        self.table.setItem(self.table.selectedIndexes()[0].row(), 2, QTableWidgetItem(str(view_count)))
+        
+        self.set_data(current_row, 2, view_count)
 
         sql_metadata = [view_count, media_id]
         self.cursor.execute("UPDATE media SET view_count=?, viewed_time=datetime('now') "
                             "WHERE id=?"
                             , sql_metadata)
-        self.connection.commit()
-        # self.select_row(1)
-        # self.play_video()
+        self.connection.commit()  
 
-    def like(self, amount):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
+    def like(self, amount):        
+        current_row = self.table.selectionModel().selectedRows()[0].row();
+        selected_row = self.items[current_row]
+
+        if not selected_row:
             return
-        like = selected_items[3].text()
-        if like == 'None':
+        like = selected_row[3]
+        if like is None:
             like = amount
         else:
             like = int(like) + amount
-        self.table.setItem(self.table.selectedIndexes()[0].row(), 3, QTableWidgetItem(str(like)))
+        
+        self.set_data(current_row, 3, like)
 
-        sql_metadata = [like, selected_items[0].text()]
+        sql_metadata = [like, selected_row[0]]
         self.cursor.execute("UPDATE media SET like=?"
                             "WHERE id=?"
                             , sql_metadata)
@@ -116,16 +173,17 @@ class Player(QWidget):
             return False
 
     def delete(self):
-        selected_items = self.table.selectedItems()
-        like = selected_items[3].text()
+        current_row = self.table.selectionModel().selectedRows()[0].row();
+        selected_row = self.items[current_row]
+        like = selected_row[3]
         
         if self.is_number(like) and int(like) >= -1:
             print("can t delete liked    ")
             return False
 
-        current_row = self.table.selectedIndexes()[0].row()
-        media_id = selected_items[0].text()
-        filename = selected_items[1].text()
+        
+        media_id = selected_row[0]
+        filename = selected_row[1]
         full_path = self.root_dir + "/" + filename
         print("deleting " + full_path)
         
@@ -139,7 +197,9 @@ class Player(QWidget):
                             "WHERE id=?"
                             , sql_metadata)
         # self.connection.commit()
-        self.table.removeRow(current_row)
+        self.table.model().deleteRow(current_row)
+        self.model = TableModel(self.items)
+        self.table.setModel(self.model)
         self.table.selectRow(current_row)
         return True
 
@@ -182,8 +242,8 @@ class Player(QWidget):
         else:
             self.table.selectRow(current_row + amount)
 
-    def load_items(self, table):
-        table.setSortingEnabled(False)
+    def load_items(self, table):        
+        table.setSortingEnabled(False)        
         query = "SELECT id,filename,view_count,like,file_size, viewed_time,width,file_size/(duration*width) FROM media " \
                 "WHERE filename LIKE ? " \
                 + self.more_conditions + " " + self.deduplicate_by_nb_frames + " "\
@@ -194,29 +254,25 @@ class Player(QWidget):
         self.cursor.execute(
             query, [self.search_expression]
         )
-        items = self.cursor.fetchall()
-        self.item_count = len(items)
-        table.setRowCount(self.item_count)
+        self.items = list(self.cursor.fetchall())
+        self.item_count = len(self.items)
+        self.model = TableModel(self.items)
+        table.setModel(self.model)
+        header = table.horizontalHeader()
+        header.sortIndicatorOrder()      
+        
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)     
+
         print (self.item_count)
         row = 0
-        for item in items:
-            table.setItem(row, 0, NumericTableWidgetItem(str(item[0])))
-            table.setItem(row, 1, QTableWidgetItem(item[1]))
-            table.setItem(row, 2, NumericTableWidgetItem(str(item[2])))
-            table.setItem(row, 3, NumericTableWidgetItem(str(item[3])))
-            table.setItem(row, 4, NumericTableWidgetItem(str(round(item[4] / (1024 * 1024)))))
-            table.setItem(row, 5, QTableWidgetItem(str(item[5])))
-            table.setItem(row, 6, NumericTableWidgetItem(str(item[6])))
-            if item[7]:
-                table.setItem(row, 7, NumericTableWidgetItem(str(round(item[7]))))
-            row += 1
+
         table.setSortingEnabled(True)
         
         self.select_row(0)
 
     def set_search_term(self, term):
         self.search_expression = "%" + term + "%"
-        self.table.setRowCount(0)
+        #self.table.setRowCount(0)
         self.load_items(self.table)
 
     def set_condition_term(self, term):
@@ -235,14 +291,8 @@ class Player(QWidget):
         conditionEdit = QLineEdit() 
         conditionEdit.setText(self.order)
         conditionEdit.textChanged.connect(self.set_condition_term)
-
-        table.setColumnCount(8)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        header = table.horizontalHeader()
-        header.sortIndicatorOrder()
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        table.setHorizontalHeaderLabels(['id', 'filename', 'views', 'likes', 'size'])
-
+        
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)             
         self.load_items(table)
 
         grid = QGridLayout()
