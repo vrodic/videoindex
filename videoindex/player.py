@@ -13,14 +13,14 @@ from shlex import quote
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
         if (isinstance(other, QTableWidgetItem)):
-            if self.data(Qt.EditRole) == "None":
+            if self.data(Qt.ItemDataRole.EditRole) is None:
                 return True
-            if other.data(Qt.EditRole) == "None":
+            if other.data(Qt.ItemDataRole.EditRole) is None:
                 return False
 
             try:
-                my_value = float(self.data(Qt.EditRole))
-                other_value = float(other.data(Qt.EditRole))
+                my_value = float(self.data(Qt.ItemDataRole.EditRole))
+                other_value = float(other.data(Qt.ItemDataRole.EditRole))
             except:
                 return False
 
@@ -145,6 +145,7 @@ class Player(QWidget):
 
     def keyPressEvent(self, e):
         key = e.key()
+        print (key)
 
         if key == Qt.Key.Key_Escape:
             self.connection.commit()
@@ -167,7 +168,10 @@ class Player(QWidget):
             self.like(1)
 
             self.select_row(1)
-
+        elif key == Qt.Key.Key_End:            
+            self.table.selectRow(self.item_count-1)            
+        elif key == Qt.Key.Key_Home:            
+            self.table.selectRow(0)   
         elif key == Qt.Key.Key_Delete:
             self.like(-1)
             if self.delete():
