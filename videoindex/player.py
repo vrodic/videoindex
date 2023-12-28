@@ -4,30 +4,12 @@ import sqlite3
 import sys
 import os
 from PyQt6 import QtCore
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSortFilterProxyModel
 from PyQt6.QtWidgets import (QTableView, QWidget, QLabel, QLineEdit,
                              QTextEdit, QGridLayout, QApplication, QListWidget, QTableWidget, QTableWidgetItem,
                              QAbstractItemView, QHeaderView)
 from shlex import quote
 
-
-class NumericTableWidgetItem(QTableWidgetItem):
-    def __lt__(self, other):
-        if (isinstance(other, QTableWidgetItem)):
-            if self.data(Qt.EditRole) == "None":
-                return True
-            if other.data(Qt.EditRole) == "None":
-                return False
-
-            try:
-                my_value = float(self.data(Qt.EditRole))
-                other_value = float(other.data(Qt.EditRole))
-            except:
-                return False
-
-            return my_value < other_value
-
-        return super(NumericTableWidgetItem, self).__lt__(other)
 
 class TableModel(QtCore.QAbstractTableModel):
     def __init__(self, data):
@@ -56,11 +38,6 @@ class TableModel(QtCore.QAbstractTableModel):
         if len(self._data) == 0:
             return 0 
         return len(self._data[0])
-    
-    def deleteRow(self, row):        
-        del self._data[row]
-        self.dataChanged.emit(self.createIndex(row,0),
-                        self.createIndex(self.rowCount(None),self.columnCount(None)))
 
     def headerData(self, section, orientation, role):           # <<<<<<<<<<<<<<< NEW DEF
         # row and column headers
@@ -81,8 +58,7 @@ class Player(QWidget):
 
         
         self.table = QTableView()
-
-        self.item_count = 0
+        
         self.search_expression = "%%"
         
         self.playing = 0
@@ -108,9 +84,15 @@ class Player(QWidget):
         self.items[row] = list(self.items[row])
         self.items[row][column] = value
 
-        index = self.table.model().createIndex(row, column)
-        self.table.model().dataChanged.emit(index, index)
+        self.set_model()
+        self.table.selectRow(row)
 
+    def set_model(self):
+        self.model = TableModel(self.items)
+        proxyModel =  QSortFilterProxyModel(self)
+        proxyModel.setSourceModel(self.model)
+        proxyModel.setDynamicSortFilter(True);
+        self.table.setModel(proxyModel)
    
     def play_video(self):
         self.playing = 1
@@ -196,10 +178,9 @@ class Player(QWidget):
         self.cursor.execute("DELETE FROM  media "
                             "WHERE id=?"
                             , sql_metadata)
-        # self.connection.commit()
-        self.table.model().deleteRow(current_row)
-        self.model = TableModel(self.items)
-        self.table.setModel(self.model)
+        # self.connection.commit()        
+        del self.items[current_row]
+        self.set_model()
         self.table.selectRow(current_row)
         return True
 
@@ -242,8 +223,7 @@ class Player(QWidget):
         else:
             self.table.selectRow(current_row + amount)
 
-    def load_items(self, table):        
-        table.setSortingEnabled(False)        
+    def load_items(self, table):                
         query = "SELECT id,filename,view_count,like,file_size, viewed_time,width,file_size/(duration*width) FROM media " \
                 "WHERE filename LIKE ? " \
                 + self.more_conditions + " " + self.deduplicate_by_nb_frames + " "\
@@ -254,19 +234,14 @@ class Player(QWidget):
         self.cursor.execute(
             query, [self.search_expression]
         )
-        self.items = list(self.cursor.fetchall())
-        self.item_count = len(self.items)
-        self.model = TableModel(self.items)
-        table.setModel(self.model)
+        self.items = list(self.cursor.fetchall())        
+        
+        self.set_model()
+
         header = table.horizontalHeader()
         header.sortIndicatorOrder()      
         
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)     
-
-        print (self.item_count)
-        row = 0
-
-        table.setSortingEnabled(True)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)             
         
         self.select_row(0)
 
