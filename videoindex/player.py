@@ -42,8 +42,7 @@ class TableModel(QtCore.QAbstractTableModel):
     def headerData(self, section, orientation, role):           # <<<<<<<<<<<<<<< NEW DEF
         # row and column headers
         if role == Qt.ItemDataRole.DisplayRole:
-            if orientation == Qt.Orientation.Horizontal:
-                print(section)
+            if orientation == Qt.Orientation.Horizontal:                
                 return self.hheaders[section]
         return QtCore.QVariant()                        
 
