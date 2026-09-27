@@ -1,9 +1,8 @@
 import Cocoa
-import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
-    private var viewModel: VideoIndexViewModel?
+    private var playerViewController: PlayerViewController!
 
     private let rootDir: String
     private let indexFile: String
@@ -15,9 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let vm = VideoIndexViewModel(rootDir: rootDir, indexFile: indexFile)
-        self.viewModel = vm
-        let contentView = ContentView(viewModel: vm)
+        playerViewController = PlayerViewController(rootDir: rootDir, indexFile: indexFile)
 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1550, height: 1000),
@@ -26,8 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "videoindex"
-        window.contentViewController = NSHostingController(rootView: contentView)
-
+        window.contentViewController = playerViewController
+        // Remembers size/position across launches on its own; only center
+        // it manually the first time there's nothing saved yet to restore.
         let restoredFrame = window.setFrameAutosaveName("VideoIndexMainWindow")
         if !restoredFrame {
             window.center()
