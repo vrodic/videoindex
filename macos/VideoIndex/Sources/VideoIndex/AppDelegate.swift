@@ -3,7 +3,7 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
-    private var viewModel: VideoIndexViewModel!
+    private var viewModel: VideoIndexViewModel?
 
     private let rootDir: String
     private let indexFile: String
@@ -15,8 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        viewModel = VideoIndexViewModel(rootDir: rootDir, indexFile: indexFile)
-        let contentView = ContentView(viewModel: viewModel)
+        let vm = VideoIndexViewModel(rootDir: rootDir, indexFile: indexFile)
+        self.viewModel = vm
+        let contentView = ContentView(viewModel: vm)
 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1550, height: 1000),
