@@ -140,6 +140,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowSizeSubmenu.addItem(sizeFullscreenItem)
         windowSizeMenuItem.submenu = windowSizeSubmenu
 
+        // Volume submenu
+        let volumeMenuItem = NSMenuItem(title: "Default Volume", action: nil, keyEquivalent: "")
+        let volumeSubmenu = NSMenu(title: "Default Volume")
+        let vol10Item = NSMenuItem(title: "10%", action: Selector(("setMpvVolume10:")), keyEquivalent: "")
+        let vol25Item = NSMenuItem(title: "25%", action: Selector(("setMpvVolume25:")), keyEquivalent: "")
+        let vol33Item = NSMenuItem(title: "33% (Default)", action: Selector(("setMpvVolume33:")), keyEquivalent: "")
+        let vol50Item = NSMenuItem(title: "50%", action: Selector(("setMpvVolume50:")), keyEquivalent: "")
+        let vol75Item = NSMenuItem(title: "75%", action: Selector(("setMpvVolume75:")), keyEquivalent: "")
+        let vol100Item = NSMenuItem(title: "100%", action: Selector(("setMpvVolume100:")), keyEquivalent: "")
+        volumeSubmenu.addItem(vol10Item)
+        volumeSubmenu.addItem(vol25Item)
+        volumeSubmenu.addItem(vol33Item)
+        volumeSubmenu.addItem(vol50Item)
+        volumeSubmenu.addItem(vol75Item)
+        volumeSubmenu.addItem(vol100Item)
+        volumeMenuItem.submenu = volumeSubmenu
+
         // Speed submenu
         let speedMenuItem = NSMenuItem(title: "Playback Speed", action: nil, keyEquivalent: "")
         let speedSubmenu = NSMenu(title: "Playback Speed")
@@ -154,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         speedMenuItem.submenu = speedSubmenu
 
         mpvMenu.addItem(volumeMaxItem)
+        mpvMenu.addItem(volumeMenuItem)
         mpvMenu.addItem(NSMenuItem.separator())
         mpvMenu.addItem(muteItem)
         mpvMenu.addItem(loopItem)

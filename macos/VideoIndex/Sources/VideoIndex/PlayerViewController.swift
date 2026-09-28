@@ -33,6 +33,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
     // MPV options state
     private var mpvVolumeMax1000 = true
+    private var mpvVolume = "33"           // default volume 33%
     private var mpvMute = false
     private var mpvLoop = false
     private var mpvNoAudio = false
@@ -807,6 +808,13 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     @objc func setMpvAutofit100(_ sender: Any?) { mpvAutofitSize = "100%x100%" }
     @objc func setMpvAutofitFullscreen(_ sender: Any?) { mpvAutofitSize = "fullscreen" }
 
+    @objc func setMpvVolume10(_ sender: Any?) { mpvVolume = "10" }
+    @objc func setMpvVolume25(_ sender: Any?) { mpvVolume = "25" }
+    @objc func setMpvVolume33(_ sender: Any?) { mpvVolume = "33" }
+    @objc func setMpvVolume50(_ sender: Any?) { mpvVolume = "50" }
+    @objc func setMpvVolume75(_ sender: Any?) { mpvVolume = "75" }
+    @objc func setMpvVolume100(_ sender: Any?) { mpvVolume = "100" }
+
     @objc func setMpvSpeed1(_ sender: Any?) { mpvSpeed = "1.0" }
     @objc func setMpvSpeed125(_ sender: Any?) { mpvSpeed = "1.25" }
     @objc func setMpvSpeed15(_ sender: Any?) { mpvSpeed = "1.5" }
@@ -852,6 +860,18 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             menuItem.state = mpvAutofitSize == "100%x100%" ? .on : .off
         } else if action == Selector(("setMpvAutofitFullscreen:")) {
             menuItem.state = mpvAutofitSize == "fullscreen" ? .on : .off
+        } else if action == Selector(("setMpvVolume10:")) {
+            menuItem.state = mpvVolume == "10" ? .on : .off
+        } else if action == Selector(("setMpvVolume25:")) {
+            menuItem.state = mpvVolume == "25" ? .on : .off
+        } else if action == Selector(("setMpvVolume33:")) {
+            menuItem.state = mpvVolume == "33" ? .on : .off
+        } else if action == Selector(("setMpvVolume50:")) {
+            menuItem.state = mpvVolume == "50" ? .on : .off
+        } else if action == Selector(("setMpvVolume75:")) {
+            menuItem.state = mpvVolume == "75" ? .on : .off
+        } else if action == Selector(("setMpvVolume100:")) {
+            menuItem.state = mpvVolume == "100" ? .on : .off
         } else if action == Selector(("setMpvSpeed1:")) {
             menuItem.state = mpvSpeed == "1.0" ? .on : .off
         } else if action == Selector(("setMpvSpeed125:")) {
@@ -874,6 +894,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         if mpvVolumeMax1000 {
             args.append("--volume-max=1000")
         }
+        args.append("--volume=\(mpvVolume)")
         if mpvMute {
             args.append("--mute=yes")
         }
