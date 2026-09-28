@@ -756,7 +756,7 @@ final class PlayerViewController: NSViewController {
         // Fire-and-forget, like the trailing "&" in `os.system('mpv ... &')`.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["mpv", path]
+        process.arguments = ["mpv", "--autofit=75%x75%", path]
         try? process.run()
 
         // The database's `viewed_time = datetime('now')` (in Database.updateViewCount)
