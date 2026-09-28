@@ -122,10 +122,12 @@ final class PlayerViewController: NSViewController {
 
         searchField.placeholderString = "Search filename…"
         searchField.delegate = self
+        searchField.allowsEditingTextAttributes = true
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
         conditionField.placeholderString = "SQL condition / ORDER BY…"
         conditionField.delegate = self
+        conditionField.allowsEditingTextAttributes = true
         conditionField.translatesAutoresizingMaskIntoConstraints = false
 
         buildPreviewPanel()
@@ -909,6 +911,12 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
 // MARK: - NSTextFieldDelegate (search & condition boxes)
 
 extension PlayerViewController: NSTextFieldDelegate {
+    func controlTextDidBeginEditing(_ obj: Notification) {
+        if let fieldEditor = obj.userInfo?["NSFieldEditor"] as? NSTextView {
+            fieldEditor.allowsUndo = true
+        }
+    }
+
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         if field === searchField {
