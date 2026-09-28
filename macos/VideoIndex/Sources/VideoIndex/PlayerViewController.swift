@@ -917,6 +917,11 @@ extension PlayerViewController: NSTextFieldDelegate {
         }
     }
 
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        textView.allowsUndo = true
+        return false
+    }
+
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         if field === searchField {
