@@ -28,6 +28,9 @@ final class PlayerViewController: NSViewController {
     private let thumbnailCache = NSCache<NSString, NSImage>()
     private var didSetInitialSplitPosition = false
 
+    private var previewTask: Task<Void, Never>?
+    private var upNextTask: Task<Void, Never>?
+
     // "Up Next" strip: one thumbnail per upcoming file (after the current
     // selection), to the left of the percentage filmstrip. Non-scrolling —
     // it only ever shows as many rows as fit the pane's current height.
@@ -119,10 +122,12 @@ final class PlayerViewController: NSViewController {
 
         searchField.placeholderString = "Search filename…"
         searchField.delegate = self
+        searchField.allowsEditingTextAttributes = true
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
         conditionField.placeholderString = "SQL condition / ORDER BY…"
         conditionField.delegate = self
+        conditionField.allowsEditingTextAttributes = true
         conditionField.translatesAutoresizingMaskIntoConstraints = false
 
         buildPreviewPanel()
@@ -209,67 +214,66 @@ final class PlayerViewController: NSViewController {
         previewScrollView.translatesAutoresizingMaskIntoConstraints = false
         previewScrollView.documentView = stack
 
-        previewContainer.translatesAutoresizingMaskIntoConstraints = false      
+        previewContainer.translatesAutoresizingMaskIntoConstraints = false
         previewContainer.addSubview(previewScrollView)
         previewContainer.addSubview(upNextContainer)
 
-NSLayoutConstraint.activate([
+        NSLayoutConstraint.activate([
+            // PREVIEW — left column
+            previewScrollView.topAnchor.constraint(
+                equalTo: previewContainer.topAnchor,
+                constant: 8
+            ),
 
-    // PREVIEW — left column
-    previewScrollView.topAnchor.constraint(
-        equalTo: previewContainer.topAnchor,
-        constant: 8
-    ),
+            previewScrollView.leadingAnchor.constraint(
+                equalTo: previewContainer.leadingAnchor,
+                constant: 8
+            ),
 
-    previewScrollView.leadingAnchor.constraint(
-        equalTo: previewContainer.leadingAnchor,
-        constant: 8
-    ),
+            previewScrollView.bottomAnchor.constraint(
+                equalTo: previewContainer.bottomAnchor,
+                constant: -8
+            ),
 
-    previewScrollView.bottomAnchor.constraint(
-        equalTo: previewContainer.bottomAnchor,
-        constant: -8
-    ),
+            // UP NEXT — right column
+            upNextContainer.topAnchor.constraint(
+                equalTo: previewContainer.topAnchor,
+                constant: 8
+            ),
 
-    // UP NEXT — right column
-    upNextContainer.topAnchor.constraint(
-        equalTo: previewContainer.topAnchor,
-        constant: 8
-    ),
+            upNextContainer.leadingAnchor.constraint(
+                equalTo: previewScrollView.trailingAnchor,
+                constant: 10
+            ),
 
-    upNextContainer.leadingAnchor.constraint(
-        equalTo: previewScrollView.trailingAnchor,
-        constant: 10
-    ),
+            upNextContainer.trailingAnchor.constraint(
+                equalTo: previewContainer.trailingAnchor,
+                constant: -8
+            ),
 
-    upNextContainer.trailingAnchor.constraint(
-        equalTo: previewContainer.trailingAnchor,
-        constant: -8
-    ),
+            upNextContainer.bottomAnchor.constraint(
+                equalTo: previewContainer.bottomAnchor,
+                constant: -8
+            ),
 
-    upNextContainer.bottomAnchor.constraint(
-        equalTo: previewContainer.bottomAnchor,
-        constant: -8
-    ),
+            // Equal widths
+            upNextContainer.widthAnchor.constraint(
+                equalTo: previewScrollView.widthAnchor
+            ),
 
-    // Equal widths
-    upNextContainer.widthAnchor.constraint(
-        equalTo: previewScrollView.widthAnchor
-    ),
+            // Filmstrip follows preview scroll view width
+            stack.topAnchor.constraint(
+                equalTo: previewScrollView.contentView.topAnchor
+            ),
 
-    // Filmstrip follows preview scroll view width
-    stack.topAnchor.constraint(
-        equalTo: previewScrollView.contentView.topAnchor
-    ),
+            stack.leadingAnchor.constraint(
+                equalTo: previewScrollView.contentView.leadingAnchor
+            ),
 
-    stack.leadingAnchor.constraint(
-        equalTo: previewScrollView.contentView.leadingAnchor
-    ),
-
-    stack.widthAnchor.constraint(
-        equalTo: previewScrollView.contentView.widthAnchor
-    )
-])
+            stack.widthAnchor.constraint(
+                equalTo: previewScrollView.contentView.widthAnchor
+            )
+        ])
     }
 
     /// Builds the fixed-width "Up Next" column: a heading plus a pool of
@@ -374,7 +378,7 @@ NSLayoutConstraint.activate([
         if tableView.sortDescriptors.isEmpty {
             tableView.reloadData()
         } else {
-            applySort() // keep whatever column sort was active through the new data
+            applySort()
         }
         if selectedRow == nil, !items.isEmpty {
             tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
@@ -504,6 +508,9 @@ NSLayoutConstraint.activate([
     /// showing the same image already visible there); slots 1+ are the
     /// files that come after it in the list.
     private func refreshUpNext() {
+        upNextTask?.cancel()
+        upNextTask = nil
+
         guard currentUpNextSlotCount > 0 else { return }
         guard let selected = selectedRow, items.indices.contains(selected) else {
             for imageView in upNextImageViews { imageView.image = nil }
@@ -511,18 +518,29 @@ NSLayoutConstraint.activate([
             return
         }
 
-        let visible = Array(selected..<items.count).prefix(currentUpNextSlotCount)
+        let visibleRows = Array(selected..<items.count).prefix(currentUpNextSlotCount)
 
-        for slot in 0..<currentUpNextSlotCount {
-            guard slot < visible.count else {
-                upNextImageViews[slot].image = nil
-                upNextImageViews[slot].toolTip = nil
-                upNextAssignedItemIDs[slot] = nil
-                continue
+        upNextTask = Task { [weak self] in
+            guard let self else { return }
+            for slot in 0..<self.currentUpNextSlotCount {
+                if Task.isCancelled { break }
+                guard slot < visibleRows.count else {
+                    await MainActor.run {
+                        self.upNextImageViews[slot].image = nil
+                        self.upNextImageViews[slot].toolTip = nil
+                        self.upNextAssignedItemIDs[slot] = nil
+                    }
+                    continue
+                }
+                let itemRowIndex = visibleRows[visibleRows.index(visibleRows.startIndex, offsetBy: slot)]
+                guard self.items.indices.contains(itemRowIndex) else { continue }
+                let item = self.items[itemRowIndex]
+
+                await MainActor.run {
+                    self.upNextImageViews[slot].toolTip = item.filename
+                }
+                await self.loadUpNextThumbnail(item: item, slot: slot)
             }
-            let item = items[visible[visible.index(visible.startIndex, offsetBy: slot)]]
-            upNextImageViews[slot].toolTip = item.filename
-            loadUpNextThumbnail(item: item, slot: slot)
         }
     }
 
@@ -538,7 +556,7 @@ NSLayoutConstraint.activate([
         view.window?.makeFirstResponder(tableView) // keep keyboard shortcuts working right after the click
     }
 
-    private func loadUpNextThumbnail(item: MediaItem, slot: Int) {
+    private func loadUpNextThumbnail(item: MediaItem, slot: Int) async {
         upNextAssignedItemIDs[slot] = item.id
         let key = cacheKey(id: item.id, percent: upNextPercent)
         if let cached = thumbnailCache.object(forKey: key) {
@@ -550,27 +568,27 @@ NSLayoutConstraint.activate([
         let requestedID = item.id
         let url = URL(fileURLWithPath: item.fullPath(root: rootDir))
 
-        Task { [weak self] in
-            guard let self else { return }
-            let asset = AVURLAsset(url: url)
-            guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else { return }
+        let asset = AVURLAsset(url: url)
+        guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else { return }
+        if Task.isCancelled { return }
 
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.requestedTimeToleranceBefore = .zero
-            generator.requestedTimeToleranceAfter = .zero
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
 
-            let seconds = durationSeconds * Double(self.upNextPercent) / 100
-            guard let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) else { return }
-            self.thumbnailCache.setObject(image, forKey: key)
+        let seconds = durationSeconds * Double(self.upNextPercent) / 100
+        guard let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) else { return }
+        if Task.isCancelled { return }
 
-            await MainActor.run {
-                // The slot may have been reassigned to a different file (list
-                // re-sorted, selection moved, window shrank) while this ran.
-                guard slot < self.upNextAssignedItemIDs.count,
-                      self.upNextAssignedItemIDs[slot] == requestedID else { return }
-                self.upNextImageViews[slot].image = image
-            }
+        self.thumbnailCache.setObject(image, forKey: key)
+
+        await MainActor.run {
+            // The slot may have been reassigned to a different file (list
+            // re-sorted, selection moved, window shrank) while this ran.
+            guard slot < self.upNextAssignedItemIDs.count,
+                  self.upNextAssignedItemIDs[slot] == requestedID else { return }
+            self.upNextImageViews[slot].image = image
         }
     }
 
@@ -580,6 +598,9 @@ NSLayoutConstraint.activate([
     /// Already-cached frames apply instantly; anything missing is generated
     /// (in parallel) and filled in as it completes.
     private func updatePreview(for item: MediaItem?) {
+        previewTask?.cancel()
+        previewTask = nil
+
         guard let item else {
             previewLabel.stringValue = ""
             for imageView in previewImageViews.values { imageView.image = nil }
@@ -602,7 +623,7 @@ NSLayoutConstraint.activate([
         }
         guard !percentsNeeded.isEmpty else { return }
 
-        Task { [weak self] in
+        previewTask = Task { [weak self] in
             guard let self else { return }
             let asset = AVURLAsset(url: url)
             guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else {
@@ -610,6 +631,7 @@ NSLayoutConstraint.activate([
                       "(AVFoundation can't parse this format, and ffprobe either isn't installed or failed too)")
                 return
             }
+            if Task.isCancelled { return }
 
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
@@ -619,12 +641,14 @@ NSLayoutConstraint.activate([
             await withTaskGroup(of: (Int, NSImage?).self) { group in
                 for percent in percentsNeeded {
                     group.addTask {
+                        if Task.isCancelled { return (percent, nil) }
                         let seconds = durationSeconds * Double(percent) / 100
                         let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds)
                         return (percent, image)
                     }
                 }
                 for await (percent, image) in group {
+                    if Task.isCancelled { break }
                     guard let image else { continue }
                     self.thumbnailCache.setObject(image, forKey: self.cacheKey(id: requestedID, percent: percent))
                     await MainActor.run {
@@ -734,7 +758,7 @@ NSLayoutConstraint.activate([
         // Fire-and-forget, like the trailing "&" in `os.system('mpv ... &')`.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["mpv", path]
+        process.arguments = ["mpv", "--autofit=75%x75%", path]
         try? process.run()
 
         // The database's `viewed_time = datetime('now')` (in Database.updateViewCount)
@@ -887,6 +911,17 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
 // MARK: - NSTextFieldDelegate (search & condition boxes)
 
 extension PlayerViewController: NSTextFieldDelegate {
+    func controlTextDidBeginEditing(_ obj: Notification) {
+        if let fieldEditor = obj.userInfo?["NSFieldEditor"] as? NSTextView {
+            fieldEditor.allowsUndo = true
+        }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        textView.allowsUndo = true
+        return false
+    }
+
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         if field === searchField {
