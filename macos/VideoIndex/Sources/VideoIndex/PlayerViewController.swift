@@ -748,7 +748,39 @@ final class PlayerViewController: NSViewController {
         return NSImage(contentsOf: outputURL)
     }
 
-    // MARK: - Actions
+    // MARK: - Actions & Responder Chain Menu Handlers
+
+    @objc func reloadQuery(_ sender: Any?) {
+        reload()
+    }
+
+    @objc func focusSearchField(_ sender: Any?) {
+        view.window?.makeFirstResponder(searchField)
+    }
+
+    @objc func focusConditionField(_ sender: Any?) {
+        view.window?.makeFirstResponder(conditionField)
+    }
+
+    @objc func playSelectedMedia(_ sender: Any?) {
+        playSelected()
+    }
+
+    @objc func likeSelectedMedia(_ sender: Any?) {
+        handleLikeIncrement()
+    }
+
+    @objc func deleteOrDislikeSelectedMedia(_ sender: Any?) {
+        handleDeleteOrDislike()
+    }
+
+    @objc func selectFirstItem(_ sender: Any?) {
+        handleHome()
+    }
+
+    @objc func selectLastItem(_ sender: Any?) {
+        handleEnd()
+    }
 
     private func playSelected() {
         guard let row = selectedRow, items.indices.contains(row) else { return }
@@ -892,14 +924,29 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
             ])
         }
         cell.textField?.stringValue = text
-        // A quick visual cue for how close a row is to the two-dislikes-
-        // deletes-it threshold (see deleteSelectedIfAllowed): green once
-        // liked, red once it's taken its first dislike.
+        // Visual cue for likes/dislikes with adequate contrast on light/dark modes:
+        // 1 like: passable (orange)
+        // 2 likes: fine (yellow)
+        // 3 likes: good (green)
+        // 4 likes: excellent (teal)
+        // 5+ likes: best (purple)
+        // dislikes (< 0): red
         if identifier.rawValue == "likes" {
             switch item.like {
-            case .some(let like) where like > 0: cell.textField?.textColor = .systemGreen
-            case .some(let like) where like < 0: cell.textField?.textColor = .systemRed
-            default: cell.textField?.textColor = .labelColor
+            case .some(let like) where like < 0:
+                cell.textField?.textColor = .systemRed
+            case .some(1):
+                cell.textField?.textColor = .systemOrange
+            case .some(2):
+                cell.textField?.textColor = .systemYellow
+            case .some(3):
+                cell.textField?.textColor = .systemGreen
+            case .some(4):
+                cell.textField?.textColor = .systemTeal
+            case .some(let like) where like >= 5:
+                cell.textField?.textColor = .systemPurple
+            default:
+                cell.textField?.textColor = .labelColor
             }
         } else {
             cell.textField?.textColor = .labelColor
