@@ -1,7 +1,7 @@
 import Cocoa
 import AVFoundation
 
-final class PlayerViewController: NSViewController {
+final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
     private let rootDir: String
     private let db: Database
@@ -817,7 +817,7 @@ final class PlayerViewController: NSViewController {
         return firstResponder.isDescendant(of: tableView) || firstResponder === tableView
     }
 
-    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         let action = menuItem.action
 
         // Table controls should only work when the list/table is focused
