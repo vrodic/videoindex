@@ -763,6 +763,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     // MARK: - Actions & Responder Chain Menu Handlers
 
     @objc func reloadQuery(_ sender: Any?) {
+        tableView.sortDescriptors = []
         reload()
     }
 
