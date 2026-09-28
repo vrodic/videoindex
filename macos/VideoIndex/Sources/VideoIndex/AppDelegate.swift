@@ -115,6 +115,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controlsMenuItem.submenu = controlsMenu
         mainMenu.addItem(controlsMenuItem)
 
+        // MPV Options Menu
+        let mpvMenuItem = NSMenuItem()
+        let mpvMenu = NSMenu(title: "MPV")
+
+        let volumeMaxItem = NSMenuItem(title: "Max Volume 1000 (--volume-max=1000)", action: Selector(("toggleMpvVolumeMax1000:")), keyEquivalent: "")
+        let muteItem = NSMenuItem(title: "Mute (--mute=yes)", action: Selector(("toggleMpvMute:")), keyEquivalent: "")
+        let loopItem = NSMenuItem(title: "Loop Video (--loop-file=inf)", action: Selector(("toggleMpvLoop:")), keyEquivalent: "")
+        let noAudioItem = NSMenuItem(title: "No Audio (--no-audio)", action: Selector(("toggleMpvNoAudio:")), keyEquivalent: "")
+        let keepOpenItem = NSMenuItem(title: "Keep Open After Playback (--keep-open=yes)", action: Selector(("toggleMpvKeepOpen:")), keyEquivalent: "")
+        let ontopItem = NSMenuItem(title: "Always On Top (--ontop)", action: Selector(("toggleMpvOntop:")), keyEquivalent: "")
+        let hwdecItem = NSMenuItem(title: "Hardware Decoding (--hwdec=auto)", action: Selector(("toggleMpvHwdec:")), keyEquivalent: "")
+
+        // Window size submenu
+        let windowSizeMenuItem = NSMenuItem(title: "Autofit Window Size", action: nil, keyEquivalent: "")
+        let windowSizeSubmenu = NSMenu(title: "Autofit Window Size")
+        let size50Item = NSMenuItem(title: "50%", action: Selector(("setMpvAutofit50:")), keyEquivalent: "")
+        let size75Item = NSMenuItem(title: "75% (Default)", action: Selector(("setMpvAutofit75:")), keyEquivalent: "")
+        let size100Item = NSMenuItem(title: "100%", action: Selector(("setMpvAutofit100:")), keyEquivalent: "")
+        let sizeFullscreenItem = NSMenuItem(title: "Fullscreen", action: Selector(("setMpvAutofitFullscreen:")), keyEquivalent: "")
+        windowSizeSubmenu.addItem(size50Item)
+        windowSizeSubmenu.addItem(size75Item)
+        windowSizeSubmenu.addItem(size100Item)
+        windowSizeSubmenu.addItem(sizeFullscreenItem)
+        windowSizeMenuItem.submenu = windowSizeSubmenu
+
+        // Speed submenu
+        let speedMenuItem = NSMenuItem(title: "Playback Speed", action: nil, keyEquivalent: "")
+        let speedSubmenu = NSMenu(title: "Playback Speed")
+        let speed1Item = NSMenuItem(title: "1.0x (Normal)", action: Selector(("setMpvSpeed1:")), keyEquivalent: "")
+        let speed125Item = NSMenuItem(title: "1.25x", action: Selector(("setMpvSpeed125:")), keyEquivalent: "")
+        let speed15Item = NSMenuItem(title: "1.5x", action: Selector(("setMpvSpeed15:")), keyEquivalent: "")
+        let speed20Item = NSMenuItem(title: "2.0x", action: Selector(("setMpvSpeed20:")), keyEquivalent: "")
+        speedSubmenu.addItem(speed1Item)
+        speedSubmenu.addItem(speed125Item)
+        speedSubmenu.addItem(speed15Item)
+        speedSubmenu.addItem(speed20Item)
+        speedMenuItem.submenu = speedSubmenu
+
+        mpvMenu.addItem(volumeMaxItem)
+        mpvMenu.addItem(NSMenuItem.separator())
+        mpvMenu.addItem(muteItem)
+        mpvMenu.addItem(loopItem)
+        mpvMenu.addItem(noAudioItem)
+        mpvMenu.addItem(keepOpenItem)
+        mpvMenu.addItem(ontopItem)
+        mpvMenu.addItem(hwdecItem)
+        mpvMenu.addItem(NSMenuItem.separator())
+        mpvMenu.addItem(windowSizeMenuItem)
+        mpvMenu.addItem(speedMenuItem)
+
+        mpvMenuItem.submenu = mpvMenu
+        mainMenu.addItem(mpvMenuItem)
+
         NSApp.mainMenu = mainMenu
     }
 

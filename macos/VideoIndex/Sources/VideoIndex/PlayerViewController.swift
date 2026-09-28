@@ -31,6 +31,17 @@ final class PlayerViewController: NSViewController {
     private var previewTask: Task<Void, Never>?
     private var upNextTask: Task<Void, Never>?
 
+    // MPV options state
+    private var mpvVolumeMax1000 = true
+    private var mpvMute = false
+    private var mpvLoop = false
+    private var mpvNoAudio = false
+    private var mpvKeepOpen = false
+    private var mpvOntop = false
+    private var mpvHwdec = false
+    private var mpvAutofitSize = "75%x75%" // options: "50%x50%", "75%x75%", "100%x100%", "fullscreen"
+    private var mpvSpeed = "1.0"           // options: "1.0", "1.25", "1.5", "2.0"
+
     // "Up Next" strip: one thumbnail per upcoming file (after the current
     // selection), to the left of the percentage filmstrip. Non-scrolling —
     // it only ever shows as many rows as fit the pane's current height.
@@ -782,15 +793,119 @@ final class PlayerViewController: NSViewController {
         handleEnd()
     }
 
+    // MPV Menu Toggle Actions
+    @objc func toggleMpvVolumeMax1000(_ sender: Any?) { mpvVolumeMax1000.toggle() }
+    @objc func toggleMpvMute(_ sender: Any?) { mpvMute.toggle() }
+    @objc func toggleMpvLoop(_ sender: Any?) { mpvLoop.toggle() }
+    @objc func toggleMpvNoAudio(_ sender: Any?) { mpvNoAudio.toggle() }
+    @objc func toggleMpvKeepOpen(_ sender: Any?) { mpvKeepOpen.toggle() }
+    @objc func toggleMpvOntop(_ sender: Any?) { mpvOntop.toggle() }
+    @objc func toggleMpvHwdec(_ sender: Any?) { mpvHwdec.toggle() }
+
+    @objc func setMpvAutofit50(_ sender: Any?) { mpvAutofitSize = "50%x50%" }
+    @objc func setMpvAutofit75(_ sender: Any?) { mpvAutofitSize = "75%x75%" }
+    @objc func setMpvAutofit100(_ sender: Any?) { mpvAutofitSize = "100%x100%" }
+    @objc func setMpvAutofitFullscreen(_ sender: Any?) { mpvAutofitSize = "fullscreen" }
+
+    @objc func setMpvSpeed1(_ sender: Any?) { mpvSpeed = "1.0" }
+    @objc func setMpvSpeed125(_ sender: Any?) { mpvSpeed = "1.25" }
+    @objc func setMpvSpeed15(_ sender: Any?) { mpvSpeed = "1.5" }
+    @objc func setMpvSpeed20(_ sender: Any?) { mpvSpeed = "2.0" }
+
+    private func isTableViewFocused() -> Bool {
+        guard let firstResponder = view.window?.firstResponder as? NSView else { return false }
+        return firstResponder.isDescendant(of: tableView) || firstResponder === tableView
+    }
+
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let action = menuItem.action
+
+        // Table controls should only work when the list/table is focused
+        if action == Selector(("playSelectedMedia:")) ||
+            action == Selector(("likeSelectedMedia:")) ||
+            action == Selector(("deleteOrDislikeSelectedMedia:")) ||
+            action == Selector(("selectFirstItem:")) ||
+            action == Selector(("selectLastItem:")) {
+            return isTableViewFocused()
+        }
+
+        // Validate checkmarks and state for MPV menu items
+        if action == Selector(("toggleMpvVolumeMax1000:")) {
+            menuItem.state = mpvVolumeMax1000 ? .on : .off
+        } else if action == Selector(("toggleMpvMute:")) {
+            menuItem.state = mpvMute ? .on : .off
+        } else if action == Selector(("toggleMpvLoop:")) {
+            menuItem.state = mpvLoop ? .on : .off
+        } else if action == Selector(("toggleMpvNoAudio:")) {
+            menuItem.state = mpvNoAudio ? .on : .off
+        } else if action == Selector(("toggleMpvKeepOpen:")) {
+            menuItem.state = mpvKeepOpen ? .on : .off
+        } else if action == Selector(("toggleMpvOntop:")) {
+            menuItem.state = mpvOntop ? .on : .off
+        } else if action == Selector(("toggleMpvHwdec:")) {
+            menuItem.state = mpvHwdec ? .on : .off
+        } else if action == Selector(("setMpvAutofit50:")) {
+            menuItem.state = mpvAutofitSize == "50%x50%" ? .on : .off
+        } else if action == Selector(("setMpvAutofit75:")) {
+            menuItem.state = mpvAutofitSize == "75%x75%" ? .on : .off
+        } else if action == Selector(("setMpvAutofit100:")) {
+            menuItem.state = mpvAutofitSize == "100%x100%" ? .on : .off
+        } else if action == Selector(("setMpvAutofitFullscreen:")) {
+            menuItem.state = mpvAutofitSize == "fullscreen" ? .on : .off
+        } else if action == Selector(("setMpvSpeed1:")) {
+            menuItem.state = mpvSpeed == "1.0" ? .on : .off
+        } else if action == Selector(("setMpvSpeed125:")) {
+            menuItem.state = mpvSpeed == "1.25" ? .on : .off
+        } else if action == Selector(("setMpvSpeed15:")) {
+            menuItem.state = mpvSpeed == "1.5" ? .on : .off
+        } else if action == Selector(("setMpvSpeed20:")) {
+            menuItem.state = mpvSpeed == "2.0" ? .on : .off
+        }
+
+        return true
+    }
+
     private func playSelected() {
         guard let row = selectedRow, items.indices.contains(row) else { return }
         var item = items[row]
         let path = item.fullPath(root: rootDir)
 
+        var args = ["mpv"]
+        if mpvVolumeMax1000 {
+            args.append("--volume-max=1000")
+        }
+        if mpvMute {
+            args.append("--mute=yes")
+        }
+        if mpvLoop {
+            args.append("--loop-file=inf")
+        }
+        if mpvNoAudio {
+            args.append("--no-audio")
+        }
+        if mpvKeepOpen {
+            args.append("--keep-open=yes")
+        }
+        if mpvOntop {
+            args.append("--ontop")
+        }
+        if mpvHwdec {
+            args.append("--hwdec=auto")
+        }
+        if mpvAutofitSize == "fullscreen" {
+            args.append("--fullscreen")
+        } else {
+            args.append("--autofit=\(mpvAutofitSize)")
+        }
+        if mpvSpeed != "1.0" {
+            args.append("--speed=\(mpvSpeed)")
+        }
+        args.append(path)
+
         // Fire-and-forget, like the trailing "&" in `os.system('mpv ... &')`.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["mpv", "--autofit=75%x75%", path]
+        process.arguments = args
         try? process.run()
 
         // The database's `viewed_time = datetime('now')` (in Database.updateViewCount)
