@@ -1,7 +1,41 @@
 import Cocoa
 import AVFoundation
 
-final class PlayerViewController: NSViewController {
+/// Custom table row view that draws a subtle background highlight for played / viewed videos
+final class CustomTableRowView: NSTableRowView {
+    var isViewed: Bool = false {
+        didSet {
+            if oldValue != isViewed {
+                needsDisplay = true
+            }
+        }
+    }
+
+    var isSessionPlayed: Bool = false {
+        didSet {
+            if oldValue != isSessionPlayed {
+                needsDisplay = true
+            }
+        }
+    }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        if isSessionPlayed {
+            // Distinct, pleasant green tint for videos played during the active session
+            let sessionPlayedBackgroundColor = NSColor.systemGreen.withAlphaComponent(0.18)
+            sessionPlayedBackgroundColor.setFill()
+            dirtyRect.fill()
+        } else if isViewed {
+            // Subtle blue tint for previously viewed videos
+            let viewedBackgroundColor = NSColor.systemBlue.withAlphaComponent(0.12)
+            viewedBackgroundColor.setFill()
+            dirtyRect.fill()
+        }
+    }
+}
+
+final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
     private let rootDir: String
     private let db: Database
@@ -28,8 +62,20 @@ final class PlayerViewController: NSViewController {
     private let thumbnailCache = NSCache<NSString, NSImage>()
     private var didSetInitialSplitPosition = false
 
-    private var previewTask: Task<Void, Never>?
-    private var upNextTask: Task<Void, Never>?
+    private var thumbnailGenerationTask: Task<Void, Never>?
+    private var sessionPlayedIDs: Set<Int> = []
+
+    // MPV options state
+    private var mpvVolumeMax1000 = true
+    private var mpvVolume = "33"           // default volume 33%
+    private var mpvMute = false
+    private var mpvLoop = false
+    private var mpvNoAudio = false
+    private var mpvKeepOpen = false
+    private var mpvOntop = false
+    private var mpvHwdec = false
+    private var mpvAutofitSize = "75%x75%" // options: "50%x50%", "75%x75%", "100%x100%", "fullscreen"
+    private var mpvSpeed = "1.0"           // options: "1.0", "1.25", "1.5", "2.0"
 
     // "Up Next" strip: one thumbnail per upcoming file (after the current
     // selection), to the left of the percentage filmstrip. Non-scrolling —
@@ -466,21 +512,14 @@ final class PlayerViewController: NSViewController {
                               columnIndexes: IndexSet(integersIn: 0..<tableView.numberOfColumns))
     }
 
-    // MARK: - Up Next column
+    // MARK: - Up Next & Preview Sequential Thumbnail Generation
 
-    /// Recomputes how many "Up Next" rows fit the column's current height
-    /// and reveals exactly that many — no scrolling, so growing the window
-    /// (or the divider, which doesn't change height, but a window resize
-    /// does) can add rows and shrinking it removes them.
     private func updateUpNextSlotCount() {
         let availableHeight = upNextContainer.bounds.height - upNextLabel.fittingSize.height - 6
         guard availableHeight > 0 else {
             setUpNextSlotCount(0)
             return
         }
-        // upNextContainer's own width now tracks the filmstrip's width (they
-        // split the pane equally), so measure it live rather than assuming
-        // a fixed value — it changes as the divider or window is resized.
         let rowHeight = upNextContainer.bounds.width * upNextRowAspect
         let slots = (availableHeight + upNextRowSpacing) / (rowHeight + upNextRowSpacing)
         setUpNextSlotCount(max(0, min(upNextMaxSlots, Int(slots.rounded(.down)))))
@@ -492,171 +531,171 @@ final class PlayerViewController: NSViewController {
         for (index, imageView) in upNextImageViews.enumerated() {
             imageView.isHidden = index >= count
         }
-        refreshUpNext()
+        refreshThumbnails()
     }
 
-    /// Fills the currently-visible "Up Next" slots with the files that come
-    /// right after the current selection, in list order. Cached frames (a
-    /// file may already have been generated earlier, either as an Up Next
-    /// row or as the 45% filmstrip row when it was itself selected — both
-    /// share the same cache bucket) apply instantly; the rest generate
-    /// in the background.
-    ///
-    /// Slot 0 is always the *current* selection (it gets a permanent accent
-    /// border in buildUpNextColumn to mark it as such — and since it shares
-    /// its cache key with the filmstrip's own 45% row, it's usually just
-    /// showing the same image already visible there); slots 1+ are the
-    /// files that come after it in the list.
-    private func refreshUpNext() {
-        upNextTask?.cancel()
-        upNextTask = nil
-
-        guard currentUpNextSlotCount > 0 else { return }
-        guard let selected = selectedRow, items.indices.contains(selected) else {
-            for imageView in upNextImageViews { imageView.image = nil }
-            upNextAssignedItemIDs = Array(repeating: nil, count: upNextMaxSlots)
-            return
-        }
-
-        let visibleRows = Array(selected..<items.count).prefix(currentUpNextSlotCount)
-
-        upNextTask = Task { [weak self] in
-            guard let self else { return }
-            for slot in 0..<self.currentUpNextSlotCount {
-                if Task.isCancelled { break }
-                guard slot < visibleRows.count else {
-                    await MainActor.run {
-                        self.upNextImageViews[slot].image = nil
-                        self.upNextImageViews[slot].toolTip = nil
-                        self.upNextAssignedItemIDs[slot] = nil
-                    }
-                    continue
-                }
-                let itemRowIndex = visibleRows[visibleRows.index(visibleRows.startIndex, offsetBy: slot)]
-                guard self.items.indices.contains(itemRowIndex) else { continue }
-                let item = self.items[itemRowIndex]
-
-                await MainActor.run {
-                    self.upNextImageViews[slot].toolTip = item.filename
-                }
-                await self.loadUpNextThumbnail(item: item, slot: slot)
-            }
-        }
-    }
-
-    /// Clicking an "Up Next" thumbnail jumps the table's selection straight
-    /// to that file — looked up by id (not the slot's list position) since
-    /// the list could in principle have changed between generating the
-    /// thumbnail and the click landing.
     private func selectUpNextSlot(_ slot: Int) {
         guard slot < upNextAssignedItemIDs.count, let itemID = upNextAssignedItemIDs[slot] else { return }
         guard let targetRow = items.firstIndex(where: { $0.id == itemID }) else { return }
         tableView.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
         tableView.scrollRowToVisible(targetRow)
-        view.window?.makeFirstResponder(tableView) // keep keyboard shortcuts working right after the click
+        view.window?.makeFirstResponder(tableView)
     }
 
-    private func loadUpNextThumbnail(item: MediaItem, slot: Int) async {
-        upNextAssignedItemIDs[slot] = item.id
-        let key = cacheKey(id: item.id, percent: upNextPercent)
-        if let cached = thumbnailCache.object(forKey: key) {
-            upNextImageViews[slot].image = cached
-            return
-        }
-
-        upNextImageViews[slot].image = nil
-        let requestedID = item.id
-        let url = URL(fileURLWithPath: item.fullPath(root: rootDir))
-
-        let asset = AVURLAsset(url: url)
-        guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else { return }
-        if Task.isCancelled { return }
-
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = .zero
-
-        let seconds = durationSeconds * Double(self.upNextPercent) / 100
-        guard let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) else { return }
-        if Task.isCancelled { return }
-
-        self.thumbnailCache.setObject(image, forKey: key)
-
-        await MainActor.run {
-            // The slot may have been reassigned to a different file (list
-            // re-sorted, selection moved, window shrank) while this ran.
-            guard slot < self.upNextAssignedItemIDs.count,
-                  self.upNextAssignedItemIDs[slot] == requestedID else { return }
-            self.upNextImageViews[slot].image = image
-        }
+    private func refreshUpNext() {
+        refreshThumbnails()
     }
 
-    // MARK: - Preview (filmstrip via AVFoundation, with an ffmpeg fallback)
+    /// Fully sequential generation for IO-bound/network-drive scenarios:
+    /// First generates preview thumbnails for the selected video in order (15%, 30%, 45%, 60%, 75%, 90%),
+    /// then sequentially generates "Up Next" preview thumbnails in order for upcoming items.
+    private func refreshThumbnails() {
+        thumbnailGenerationTask?.cancel()
+        thumbnailGenerationTask = nil
 
-    /// Refreshes every row of the filmstrip for the newly selected item.
-    /// Already-cached frames apply instantly; anything missing is generated
-    /// (in parallel) and filled in as it completes.
-    private func updatePreview(for item: MediaItem?) {
-        previewTask?.cancel()
-        previewTask = nil
+        let row = selectedRow
+        let selectedItem = (row != nil && items.indices.contains(row!)) ? items[row!] : nil
 
-        guard let item else {
+        guard let selectedItem else {
             previewLabel.stringValue = ""
             for imageView in previewImageViews.values { imageView.image = nil }
+            for imageView in upNextImageViews { imageView.image = nil }
+            upNextAssignedItemIDs = Array(repeating: nil, count: upNextMaxSlots)
             return
         }
 
-        previewLabel.stringValue = item.filename
-        let requestedID = item.id
-        let url = URL(fileURLWithPath: item.fullPath(root: rootDir))
+        previewLabel.stringValue = selectedItem.filename
 
-        var percentsNeeded: [Int] = []
+        // Apply instant cached images to Preview and Up Next
+        var filmstripPercentsToLoad: [Int] = []
         for percent in previewPercentages {
-            guard let imageView = previewImageViews[percent] else { continue }
-            if let cached = thumbnailCache.object(forKey: cacheKey(id: requestedID, percent: percent)) {
-                imageView.image = cached
+            if let cached = thumbnailCache.object(forKey: cacheKey(id: selectedItem.id, percent: percent)) {
+                previewImageViews[percent]?.image = cached
             } else {
-                imageView.image = nil
-                percentsNeeded.append(percent)
+                previewImageViews[percent]?.image = nil
+                filmstripPercentsToLoad.append(percent)
             }
         }
-        guard !percentsNeeded.isEmpty else { return }
 
-        previewTask = Task { [weak self] in
-            guard let self else { return }
-            let asset = AVURLAsset(url: url)
-            guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else {
-                print("Preview generation failed for \(url.path): couldn't determine duration " +
-                      "(AVFoundation can't parse this format, and ffprobe either isn't installed or failed too)")
-                return
+        let selectedIndex = row!
+        let visibleUpNextRows = (currentUpNextSlotCount > 0) ? Array(Array(selectedIndex..<items.count).prefix(currentUpNextSlotCount)) : []
+
+        for slot in 0..<upNextMaxSlots {
+            if slot < visibleUpNextRows.count {
+                let itemIndex = visibleUpNextRows[slot]
+                let item = items[itemIndex]
+                upNextAssignedItemIDs[slot] = item.id
+                upNextImageViews[slot].toolTip = item.filename
+                let key = cacheKey(id: item.id, percent: upNextPercent)
+                if let cached = thumbnailCache.object(forKey: key) {
+                    upNextImageViews[slot].image = cached
+                } else {
+                    upNextImageViews[slot].image = nil
+                }
+            } else {
+                upNextImageViews[slot].image = nil
+                upNextImageViews[slot].toolTip = nil
+                upNextAssignedItemIDs[slot] = nil
             }
-            if Task.isCancelled { return }
+        }
 
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.requestedTimeToleranceBefore = .zero
-            generator.requestedTimeToleranceAfter = .zero
+        thumbnailGenerationTask = Task { [weak self] in
+            guard let self else { return }
 
-            await withTaskGroup(of: (Int, NSImage?).self) { group in
-                for percent in percentsNeeded {
-                    group.addTask {
-                        if Task.isCancelled { return (percent, nil) }
+            // 1. Generate preview thumbnails for the SELECTED video sequentially in order
+            if !filmstripPercentsToLoad.isEmpty {
+                let url = URL(fileURLWithPath: selectedItem.fullPath(root: self.rootDir))
+                let asset = AVURLAsset(url: url)
+                if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
+                    let generator = AVAssetImageGenerator(asset: asset)
+                    generator.appliesPreferredTrackTransform = true
+                    generator.requestedTimeToleranceBefore = .zero
+                    generator.requestedTimeToleranceAfter = .zero
+
+                    for percent in filmstripPercentsToLoad {
+                        if Task.isCancelled { return }
+                        let key = self.cacheKey(id: selectedItem.id, percent: percent)
+                        if self.thumbnailCache.object(forKey: key) != nil { continue }
+
                         let seconds = durationSeconds * Double(percent) / 100
-                        let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds)
-                        return (percent, image)
+                        if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                            if Task.isCancelled { return }
+                            self.thumbnailCache.setObject(image, forKey: key)
+                            await MainActor.run {
+                                guard let currentRow = self.selectedRow,
+                                      self.items.indices.contains(currentRow),
+                                      self.items[currentRow].id == selectedItem.id else { return }
+                                self.previewImageViews[percent]?.image = image
+                            }
+                        }
                     }
                 }
-                for await (percent, image) in group {
-                    if Task.isCancelled { break }
-                    guard let image else { continue }
-                    self.thumbnailCache.setObject(image, forKey: self.cacheKey(id: requestedID, percent: percent))
+            }
+
+
+            // 2. Generate UP NEXT thumbnails sequentially in order
+            for slot in 0..<self.currentUpNextSlotCount {
+                if Task.isCancelled { return }
+                guard slot < visibleUpNextRows.count else { continue }
+                let itemIndex = visibleUpNextRows[slot]
+                guard self.items.indices.contains(itemIndex) else { continue }
+                let item = self.items[itemIndex]
+
+                let key = self.cacheKey(id: item.id, percent: self.upNextPercent)
+                if let cached = self.thumbnailCache.object(forKey: key) {
                     await MainActor.run {
-                        // Skip if the selection moved on while we were generating.
-                        guard let row = self.selectedRow, self.items.indices.contains(row),
-                              self.items[row].id == requestedID,
-                              let imageView = self.previewImageViews[percent] else { return }
-                        imageView.image = image
+                        guard slot < self.upNextAssignedItemIDs.count,
+                              self.upNextAssignedItemIDs[slot] == item.id else { return }
+                        self.upNextImageViews[slot].image = cached
+                    }
+                    continue
+                }
+
+                let url = URL(fileURLWithPath: item.fullPath(root: self.rootDir))
+                let asset = AVURLAsset(url: url)
+                guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else { continue }
+                if Task.isCancelled { return }
+
+                let generator = AVAssetImageGenerator(asset: asset)
+                generator.appliesPreferredTrackTransform = true
+                generator.requestedTimeToleranceBefore = .zero
+                generator.requestedTimeToleranceAfter = .zero
+
+                let seconds = durationSeconds * Double(self.upNextPercent) / 100
+                if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                    if Task.isCancelled { return }
+                    self.thumbnailCache.setObject(image, forKey: key)
+                    await MainActor.run {
+                        guard slot < self.upNextAssignedItemIDs.count,
+                              self.upNextAssignedItemIDs[slot] == item.id else { return }
+                        self.upNextImageViews[slot].image = image
+                    }
+                }
+            }
+
+            // 3. Pre-generate full set of filmstrip thumbnails in advance for the IMMEDIATELY NEXT video (AFTER Up Next completes)
+            let nextIndex = selectedIndex + 1
+            if self.items.indices.contains(nextIndex) {
+                if Task.isCancelled { return }
+                let nextItem = self.items[nextIndex]
+                let url = URL(fileURLWithPath: nextItem.fullPath(root: self.rootDir))
+                let asset = AVURLAsset(url: url)
+                if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
+                    let generator = AVAssetImageGenerator(asset: asset)
+                    generator.appliesPreferredTrackTransform = true
+                    generator.requestedTimeToleranceBefore = .zero
+                    generator.requestedTimeToleranceAfter = .zero
+
+                    for percent in self.previewPercentages {
+                        if Task.isCancelled { return }
+                        let key = self.cacheKey(id: nextItem.id, percent: percent)
+                        if self.thumbnailCache.object(forKey: key) != nil { continue }
+
+                        let seconds = durationSeconds * Double(percent) / 100
+                        if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                            if Task.isCancelled { return }
+                            self.thumbnailCache.setObject(image, forKey: key)
+                        }
                     }
                 }
             }
@@ -748,23 +787,181 @@ final class PlayerViewController: NSViewController {
         return NSImage(contentsOf: outputURL)
     }
 
-    // MARK: - Actions
+    // MARK: - Actions & Responder Chain Menu Handlers
+
+    @objc func reloadQuery(_ sender: Any?) {
+        tableView.sortDescriptors = []
+        reload()
+    }
+
+    @objc func focusSearchField(_ sender: Any?) {
+        view.window?.makeFirstResponder(searchField)
+    }
+
+    @objc func focusConditionField(_ sender: Any?) {
+        view.window?.makeFirstResponder(conditionField)
+    }
+
+    @objc func playSelectedMedia(_ sender: Any?) {
+        playSelected()
+    }
+
+    @objc func likeSelectedMedia(_ sender: Any?) {
+        handleLikeIncrement()
+    }
+
+    @objc func deleteOrDislikeSelectedMedia(_ sender: Any?) {
+        handleDeleteOrDislike()
+    }
+
+    @objc func selectFirstItem(_ sender: Any?) {
+        handleHome()
+    }
+
+    @objc func selectLastItem(_ sender: Any?) {
+        handleEnd()
+    }
+
+    // MPV Menu Toggle Actions
+    @objc func toggleMpvVolumeMax1000(_ sender: Any?) { mpvVolumeMax1000.toggle() }
+    @objc func toggleMpvMute(_ sender: Any?) { mpvMute.toggle() }
+    @objc func toggleMpvLoop(_ sender: Any?) { mpvLoop.toggle() }
+    @objc func toggleMpvNoAudio(_ sender: Any?) { mpvNoAudio.toggle() }
+    @objc func toggleMpvKeepOpen(_ sender: Any?) { mpvKeepOpen.toggle() }
+    @objc func toggleMpvOntop(_ sender: Any?) { mpvOntop.toggle() }
+    @objc func toggleMpvHwdec(_ sender: Any?) { mpvHwdec.toggle() }
+
+    @objc func setMpvAutofit50(_ sender: Any?) { mpvAutofitSize = "50%x50%" }
+    @objc func setMpvAutofit75(_ sender: Any?) { mpvAutofitSize = "75%x75%" }
+    @objc func setMpvAutofit100(_ sender: Any?) { mpvAutofitSize = "100%x100%" }
+    @objc func setMpvAutofitFullscreen(_ sender: Any?) { mpvAutofitSize = "fullscreen" }
+
+    @objc func setMpvVolume10(_ sender: Any?) { mpvVolume = "10" }
+    @objc func setMpvVolume25(_ sender: Any?) { mpvVolume = "25" }
+    @objc func setMpvVolume33(_ sender: Any?) { mpvVolume = "33" }
+    @objc func setMpvVolume50(_ sender: Any?) { mpvVolume = "50" }
+    @objc func setMpvVolume75(_ sender: Any?) { mpvVolume = "75" }
+    @objc func setMpvVolume100(_ sender: Any?) { mpvVolume = "100" }
+
+    @objc func setMpvSpeed1(_ sender: Any?) { mpvSpeed = "1.0" }
+    @objc func setMpvSpeed125(_ sender: Any?) { mpvSpeed = "1.25" }
+    @objc func setMpvSpeed15(_ sender: Any?) { mpvSpeed = "1.5" }
+    @objc func setMpvSpeed20(_ sender: Any?) { mpvSpeed = "2.0" }
+
+    private func isTableViewFocused() -> Bool {
+        guard let firstResponder = view.window?.firstResponder as? NSView else { return false }
+        return firstResponder.isDescendant(of: tableView) || firstResponder === tableView
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let action = menuItem.action
+
+        // Table controls should only work when the list/table is focused
+        if action == Selector(("playSelectedMedia:")) ||
+            action == Selector(("likeSelectedMedia:")) ||
+            action == Selector(("deleteOrDislikeSelectedMedia:")) ||
+            action == Selector(("selectFirstItem:")) ||
+            action == Selector(("selectLastItem:")) {
+            return isTableViewFocused()
+        }
+
+        // Validate checkmarks and state for MPV menu items
+        if action == Selector(("toggleMpvVolumeMax1000:")) {
+            menuItem.state = mpvVolumeMax1000 ? .on : .off
+        } else if action == Selector(("toggleMpvMute:")) {
+            menuItem.state = mpvMute ? .on : .off
+        } else if action == Selector(("toggleMpvLoop:")) {
+            menuItem.state = mpvLoop ? .on : .off
+        } else if action == Selector(("toggleMpvNoAudio:")) {
+            menuItem.state = mpvNoAudio ? .on : .off
+        } else if action == Selector(("toggleMpvKeepOpen:")) {
+            menuItem.state = mpvKeepOpen ? .on : .off
+        } else if action == Selector(("toggleMpvOntop:")) {
+            menuItem.state = mpvOntop ? .on : .off
+        } else if action == Selector(("toggleMpvHwdec:")) {
+            menuItem.state = mpvHwdec ? .on : .off
+        } else if action == Selector(("setMpvAutofit50:")) {
+            menuItem.state = mpvAutofitSize == "50%x50%" ? .on : .off
+        } else if action == Selector(("setMpvAutofit75:")) {
+            menuItem.state = mpvAutofitSize == "75%x75%" ? .on : .off
+        } else if action == Selector(("setMpvAutofit100:")) {
+            menuItem.state = mpvAutofitSize == "100%x100%" ? .on : .off
+        } else if action == Selector(("setMpvAutofitFullscreen:")) {
+            menuItem.state = mpvAutofitSize == "fullscreen" ? .on : .off
+        } else if action == Selector(("setMpvVolume10:")) {
+            menuItem.state = mpvVolume == "10" ? .on : .off
+        } else if action == Selector(("setMpvVolume25:")) {
+            menuItem.state = mpvVolume == "25" ? .on : .off
+        } else if action == Selector(("setMpvVolume33:")) {
+            menuItem.state = mpvVolume == "33" ? .on : .off
+        } else if action == Selector(("setMpvVolume50:")) {
+            menuItem.state = mpvVolume == "50" ? .on : .off
+        } else if action == Selector(("setMpvVolume75:")) {
+            menuItem.state = mpvVolume == "75" ? .on : .off
+        } else if action == Selector(("setMpvVolume100:")) {
+            menuItem.state = mpvVolume == "100" ? .on : .off
+        } else if action == Selector(("setMpvSpeed1:")) {
+            menuItem.state = mpvSpeed == "1.0" ? .on : .off
+        } else if action == Selector(("setMpvSpeed125:")) {
+            menuItem.state = mpvSpeed == "1.25" ? .on : .off
+        } else if action == Selector(("setMpvSpeed15:")) {
+            menuItem.state = mpvSpeed == "1.5" ? .on : .off
+        } else if action == Selector(("setMpvSpeed20:")) {
+            menuItem.state = mpvSpeed == "2.0" ? .on : .off
+        }
+
+        return true
+    }
 
     private func playSelected() {
         guard let row = selectedRow, items.indices.contains(row) else { return }
         var item = items[row]
         let path = item.fullPath(root: rootDir)
 
+        var args = ["mpv"]
+        if mpvVolumeMax1000 {
+            args.append("--volume-max=1000")
+        }
+        args.append("--volume=\(mpvVolume)")
+        if mpvMute {
+            args.append("--mute=yes")
+        }
+        if mpvLoop {
+            args.append("--loop-file=inf")
+        }
+        if mpvNoAudio {
+            args.append("--no-audio")
+        }
+        if mpvKeepOpen {
+            args.append("--keep-open=yes")
+        }
+        if mpvOntop {
+            args.append("--ontop")
+        }
+        if mpvHwdec {
+            args.append("--hwdec=auto")
+        }
+        if mpvAutofitSize == "fullscreen" {
+            args.append("--fullscreen")
+        } else {
+            args.append("--autofit=\(mpvAutofitSize)")
+        }
+        if mpvSpeed != "1.0" {
+            args.append("--speed=\(mpvSpeed)")
+        }
+        args.append(path)
+
         // Fire-and-forget, like the trailing "&" in `os.system('mpv ... &')`.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["mpv", "--autofit=75%x75%", path]
+        process.arguments = args
         try? process.run()
 
         // The database's `viewed_time = datetime('now')` (in Database.updateViewCount)
         // already updates on every play; this line keeps the in-memory row —
         // and so the visible "Last Viewed" column — in sync with it immediately,
         // rather than only on the next full reload.
+        sessionPlayedIDs.insert(item.id)
         let newCount = (item.viewCount ?? 0) + 1
         item.viewCount = newCount
         item.viewedTime = Self.sqliteNowString()
@@ -851,9 +1048,24 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = tableView.selectedRow
-        updatePreview(for: (row >= 0 && items.indices.contains(row)) ? items[row] : nil)
-        refreshUpNext()
+        refreshThumbnails()
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let rowViewId = NSUserInterfaceItemIdentifier("videoRowView")
+        let rowView = (tableView.makeView(withIdentifier: rowViewId, owner: self) as? CustomTableRowView) ?? CustomTableRowView()
+        rowView.identifier = rowViewId
+
+        if items.indices.contains(row) {
+            let item = items[row]
+            let isViewed = (item.viewCount ?? 0) > 0 || (item.viewedTime != nil && !item.viewedTime!.isEmpty)
+            rowView.isViewed = isViewed
+            rowView.isSessionPlayed = sessionPlayedIDs.contains(item.id)
+        } else {
+            rowView.isViewed = false
+            rowView.isSessionPlayed = false
+        }
+        return rowView
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -892,14 +1104,29 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
             ])
         }
         cell.textField?.stringValue = text
-        // A quick visual cue for how close a row is to the two-dislikes-
-        // deletes-it threshold (see deleteSelectedIfAllowed): green once
-        // liked, red once it's taken its first dislike.
+        // Visual cue for likes/dislikes with adequate contrast on light/dark modes:
+        // 1 like: passable (orange)
+        // 2 likes: fine (yellow)
+        // 3 likes: good (green)
+        // 4 likes: excellent (teal)
+        // 5+ likes: best (purple)
+        // dislikes (< 0): red
         if identifier.rawValue == "likes" {
             switch item.like {
-            case .some(let like) where like > 0: cell.textField?.textColor = .systemGreen
-            case .some(let like) where like < 0: cell.textField?.textColor = .systemRed
-            default: cell.textField?.textColor = .labelColor
+            case .some(let like) where like < 0:
+                cell.textField?.textColor = .systemRed
+            case .some(1):
+                cell.textField?.textColor = .systemOrange
+            case .some(2):
+                cell.textField?.textColor = .systemYellow
+            case .some(3):
+                cell.textField?.textColor = .systemGreen
+            case .some(4):
+                cell.textField?.textColor = .systemTeal
+            case .some(let like) where like >= 5:
+                cell.textField?.textColor = .systemPurple
+            default:
+                cell.textField?.textColor = .labelColor
             }
         } else {
             cell.textField?.textColor = .labelColor
