@@ -35,6 +35,16 @@ final class Database {
         let errorMessage: String?
     }
 
+    let commonExtensions: Set<String> = [
+        "mp4", "mkv", "avi", "wmv", "mov", "flv", "webm", "mpg", "mpeg",
+        "m4v", "ts", "3gp", "vob", "divx", "xvid", "zip", "rar", "jpg", "jpeg", "png",
+        "the","and","web","videos","1080p","720p","com","with","source","video","art","aac",
+        "siterip","xxx","clips","pack","1080","h265","x264","rip","split","all","1280","720","avc","collection",
+        "apr","vip","sep","aug","jul","264","6000","full","partial","30fps","60fps","like","net","dvdrip","x265",
+        "vid","265","you","jun","2160p","3x7z0p","2600","jan","combined","first","hevc","fullcomplete",
+        "has","one","this","more","720hd","aac2","part","h264","vol","from","img","dvd","get","b9r","your","mixed","mvi"
+    ]
+
     /// Loads items matching `search` (substring of filename), filtered/ordered
     /// by the free-form SQL fragment in `conditionExpression` (e.g.
     /// "ORDER BY view_count ASC" or "AND like > 2 ORDER BY viewed_time, random()").
@@ -121,10 +131,7 @@ final class Database {
         defer { sqlite3_finalize(statement) }
 
         var nameCounts: [String: Int] = [:]
-        let commonExtensions: Set<String> = [
-            "mp4", "mkv", "avi", "wmv", "mov", "flv", "webm", "mpg", "mpeg",
-            "m4v", "ts", "3gp", "vob", "divx", "xvid", "zip", "rar", "jpg", "jpeg", "png"
-        ]
+
 
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let filename = columnText(statement, 0) else { continue }
@@ -173,10 +180,7 @@ final class Database {
         defer { sqlite3_finalize(statement) }
 
         var wordCounts: [String: Int] = [:]
-        let commonExtensions: Set<String> = [
-            "mp4", "mkv", "avi", "wmv", "mov", "flv", "webm", "mpg", "mpeg",
-            "m4v", "ts", "3gp", "vob", "divx", "xvid", "zip", "rar", "jpg", "jpeg", "png"
-        ]
+
 
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let filename = columnText(statement, 0) else { continue }
