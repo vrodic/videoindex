@@ -1,6 +1,27 @@
 import Cocoa
 import AVFoundation
 
+/// Custom table row view that draws a subtle background highlight for played / viewed videos
+final class CustomTableRowView: NSTableRowView {
+    var isViewed: Bool = false {
+        didSet {
+            if oldValue != isViewed {
+                needsDisplay = true
+            }
+        }
+    }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        if isViewed {
+            // Subtle, pleasant highlight that adapts to light/dark modes
+            let viewedBackgroundColor = NSColor.systemBlue.withAlphaComponent(0.12)
+            viewedBackgroundColor.setFill()
+            dirtyRect.fill()
+        }
+    }
+}
+
 final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
     private let rootDir: String
@@ -597,7 +618,48 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                 }
             }
 
-            // 3. Pre-generate full set of filmstrip thumbnails in advance for the IMMEDIATELY NEXT video
+
+            // 2. Generate UP NEXT thumbnails sequentially in order
+            for slot in 0..<self.currentUpNextSlotCount {
+                if Task.isCancelled { return }
+                guard slot < visibleUpNextRows.count else { continue }
+                let itemIndex = visibleUpNextRows[slot]
+                guard self.items.indices.contains(itemIndex) else { continue }
+                let item = self.items[itemIndex]
+
+                let key = self.cacheKey(id: item.id, percent: self.upNextPercent)
+                if let cached = self.thumbnailCache.object(forKey: key) {
+                    await MainActor.run {
+                        guard slot < self.upNextAssignedItemIDs.count,
+                              self.upNextAssignedItemIDs[slot] == item.id else { return }
+                        self.upNextImageViews[slot].image = cached
+                    }
+                    continue
+                }
+
+                let url = URL(fileURLWithPath: item.fullPath(root: self.rootDir))
+                let asset = AVURLAsset(url: url)
+                guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else { continue }
+                if Task.isCancelled { return }
+
+                let generator = AVAssetImageGenerator(asset: asset)
+                generator.appliesPreferredTrackTransform = true
+                generator.requestedTimeToleranceBefore = .zero
+                generator.requestedTimeToleranceAfter = .zero
+
+                let seconds = durationSeconds * Double(self.upNextPercent) / 100
+                if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                    if Task.isCancelled { return }
+                    self.thumbnailCache.setObject(image, forKey: key)
+                    await MainActor.run {
+                        guard slot < self.upNextAssignedItemIDs.count,
+                              self.upNextAssignedItemIDs[slot] == item.id else { return }
+                        self.upNextImageViews[slot].image = image
+                    }
+                }
+            }
+
+            // 3. Pre-generate full set of filmstrip thumbnails in advance for the IMMEDIATELY NEXT video (AFTER Up Next completes)
             let nextIndex = selectedIndex + 1
             if self.items.indices.contains(nextIndex) {
                 if Task.isCancelled { return }
@@ -620,39 +682,6 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                             if Task.isCancelled { return }
                             self.thumbnailCache.setObject(image, forKey: key)
                         }
-                    }
-                }
-            }
-
-            // 2. Generate UP NEXT thumbnails sequentially in order
-            for slot in 0..<self.currentUpNextSlotCount {
-                if Task.isCancelled { return }
-                guard slot < visibleUpNextRows.count else { continue }
-                let itemIndex = visibleUpNextRows[slot]
-                guard self.items.indices.contains(itemIndex) else { continue }
-                let item = self.items[itemIndex]
-
-                let key = self.cacheKey(id: item.id, percent: self.upNextPercent)
-                if self.thumbnailCache.object(forKey: key) != nil { continue }
-
-                let url = URL(fileURLWithPath: item.fullPath(root: self.rootDir))
-                let asset = AVURLAsset(url: url)
-                guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else { continue }
-                if Task.isCancelled { return }
-
-                let generator = AVAssetImageGenerator(asset: asset)
-                generator.appliesPreferredTrackTransform = true
-                generator.requestedTimeToleranceBefore = .zero
-                generator.requestedTimeToleranceAfter = .zero
-
-                let seconds = durationSeconds * Double(self.upNextPercent) / 100
-                if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
-                    if Task.isCancelled { return }
-                    self.thumbnailCache.setObject(image, forKey: key)
-                    await MainActor.run {
-                        guard slot < self.upNextAssignedItemIDs.count,
-                              self.upNextAssignedItemIDs[slot] == item.id else { return }
-                        self.upNextImageViews[slot].image = image
                     }
                 }
             }
@@ -1005,6 +1034,21 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         refreshThumbnails()
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let rowViewId = NSUserInterfaceItemIdentifier("videoRowView")
+        let rowView = (tableView.makeView(withIdentifier: rowViewId, owner: self) as? CustomTableRowView) ?? CustomTableRowView()
+        rowView.identifier = rowViewId
+
+        if items.indices.contains(row) {
+            let item = items[row]
+            let isViewed = (item.viewCount ?? 0) > 0 || (item.viewedTime != nil && !item.viewedTime!.isEmpty)
+            rowView.isViewed = isViewed
+        } else {
+            rowView.isViewed = false
+        }
+        return rowView
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
