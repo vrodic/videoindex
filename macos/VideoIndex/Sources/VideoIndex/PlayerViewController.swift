@@ -597,6 +597,33 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                 }
             }
 
+            // 3. Pre-generate full set of filmstrip thumbnails in advance for the IMMEDIATELY NEXT video
+            let nextIndex = selectedIndex + 1
+            if self.items.indices.contains(nextIndex) {
+                if Task.isCancelled { return }
+                let nextItem = self.items[nextIndex]
+                let url = URL(fileURLWithPath: nextItem.fullPath(root: self.rootDir))
+                let asset = AVURLAsset(url: url)
+                if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
+                    let generator = AVAssetImageGenerator(asset: asset)
+                    generator.appliesPreferredTrackTransform = true
+                    generator.requestedTimeToleranceBefore = .zero
+                    generator.requestedTimeToleranceAfter = .zero
+
+                    for percent in self.previewPercentages {
+                        if Task.isCancelled { return }
+                        let key = self.cacheKey(id: nextItem.id, percent: percent)
+                        if self.thumbnailCache.object(forKey: key) != nil { continue }
+
+                        let seconds = durationSeconds * Double(percent) / 100
+                        if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                            if Task.isCancelled { return }
+                            self.thumbnailCache.setObject(image, forKey: key)
+                        }
+                    }
+                }
+            }
+
             // 2. Generate UP NEXT thumbnails sequentially in order
             for slot in 0..<self.currentUpNextSlotCount {
                 if Task.isCancelled { return }
