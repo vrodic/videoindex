@@ -58,7 +58,9 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     /// panel is a vertical, scrollable filmstrip of these — widen the split
     /// pane and each thumbnail grows with it (they're pinned to 16:9).
     private let previewPercentages = [15, 30, 45, 60, 75, 90]
-    private var previewImageViews: [Int: NSImageView] = [:]
+    private var previewImageViews: [Int: ClickableThumbnailView] = [:]
+    private let previewScrollView = NSScrollView()
+    private let upNextScrollView = NSScrollView()
     private let thumbnailCache = NSCache<NSString, NSImage>()
     private var didSetInitialSplitPosition = false
 
@@ -247,7 +249,6 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
-        let previewScrollView = NSScrollView()
         previewScrollView.hasVerticalScroller = true
         previewScrollView.hasHorizontalScroller = false
         previewScrollView.drawsBackground = false
@@ -353,7 +354,6 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor, multiplier: upNextRowAspect).isActive = true
         }
 
-        let upNextScrollView = NSScrollView()
         upNextScrollView.hasVerticalScroller = true
         upNextScrollView.hasHorizontalScroller = false
         upNextScrollView.drawsBackground = false
@@ -382,16 +382,17 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
     /// One filmstrip row: a 16:9 image view (grows with the pane's width)
     /// plus a small "NN%" caption underneath.
-    private func makeThumbnailRow(percent: Int) -> (NSView, NSImageView) {
+    private func makeThumbnailRow(percent: Int) -> (NSView, ClickableThumbnailView) {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
 
-        let imageView = NSImageView()
+        let imageView = ClickableThumbnailView()
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
         imageView.layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
         imageView.layer?.cornerRadius = 4
         imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.onClick = { [weak self] in self?.playSelected() }
 
         let caption = NSTextField(labelWithString: "\(percent)%")
         caption.font = .systemFont(ofSize: 10)
@@ -533,6 +534,12 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     private func refreshThumbnails() {
         thumbnailGenerationTask?.cancel()
         thumbnailGenerationTask = nil
+
+        // Scroll both preview and Up Next scroll views back to the top on selection changes
+        previewScrollView.contentView.scroll(to: .zero)
+        previewScrollView.reflectScrolledClipView(previewScrollView.contentView)
+        upNextScrollView.contentView.scroll(to: .zero)
+        upNextScrollView.reflectScrolledClipView(upNextScrollView.contentView)
 
         let row = selectedRow
         let selectedItem = (row != nil && items.indices.contains(row!)) ? items[row!] : nil
@@ -950,6 +957,10 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         items[row] = item
         db.updateViewCount(id: item.id, viewCount: newCount)
         reloadRow(row)
+        if let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) as? CustomTableRowView {
+            rowView.isViewed = true
+            rowView.isSessionPlayed = true
+        }
     }
 
     /// Matches SQLite's `datetime('now')`: UTC, "yyyy-MM-dd HH:mm:ss". Used
