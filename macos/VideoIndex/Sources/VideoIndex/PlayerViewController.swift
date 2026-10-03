@@ -28,8 +28,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     private let thumbnailCache = NSCache<NSString, NSImage>()
     private var didSetInitialSplitPosition = false
 
-    private var previewTask: Task<Void, Never>?
-    private var upNextTask: Task<Void, Never>?
+    private var thumbnailGenerationTask: Task<Void, Never>?
 
     // MPV options state
     private var mpvVolumeMax1000 = true
@@ -478,21 +477,14 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                               columnIndexes: IndexSet(integersIn: 0..<tableView.numberOfColumns))
     }
 
-    // MARK: - Up Next column
+    // MARK: - Up Next & Preview Sequential Thumbnail Generation
 
-    /// Recomputes how many "Up Next" rows fit the column's current height
-    /// and reveals exactly that many — no scrolling, so growing the window
-    /// (or the divider, which doesn't change height, but a window resize
-    /// does) can add rows and shrinking it removes them.
     private func updateUpNextSlotCount() {
         let availableHeight = upNextContainer.bounds.height - upNextLabel.fittingSize.height - 6
         guard availableHeight > 0 else {
             setUpNextSlotCount(0)
             return
         }
-        // upNextContainer's own width now tracks the filmstrip's width (they
-        // split the pane equally), so measure it live rather than assuming
-        // a fixed value — it changes as the divider or window is resized.
         let rowHeight = upNextContainer.bounds.width * upNextRowAspect
         let slots = (availableHeight + upNextRowSpacing) / (rowHeight + upNextRowSpacing)
         setUpNextSlotCount(max(0, min(upNextMaxSlots, Int(slots.rounded(.down)))))
@@ -504,171 +496,136 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         for (index, imageView) in upNextImageViews.enumerated() {
             imageView.isHidden = index >= count
         }
-        refreshUpNext()
+        refreshThumbnails()
     }
 
-    /// Fills the currently-visible "Up Next" slots with the files that come
-    /// right after the current selection, in list order. Cached frames (a
-    /// file may already have been generated earlier, either as an Up Next
-    /// row or as the 45% filmstrip row when it was itself selected — both
-    /// share the same cache bucket) apply instantly; the rest generate
-    /// in the background.
-    ///
-    /// Slot 0 is always the *current* selection (it gets a permanent accent
-    /// border in buildUpNextColumn to mark it as such — and since it shares
-    /// its cache key with the filmstrip's own 45% row, it's usually just
-    /// showing the same image already visible there); slots 1+ are the
-    /// files that come after it in the list.
-    private func refreshUpNext() {
-        upNextTask?.cancel()
-        upNextTask = nil
-
-        guard currentUpNextSlotCount > 0 else { return }
-        guard let selected = selectedRow, items.indices.contains(selected) else {
-            for imageView in upNextImageViews { imageView.image = nil }
-            upNextAssignedItemIDs = Array(repeating: nil, count: upNextMaxSlots)
-            return
-        }
-
-        let visibleRows = Array(selected..<items.count).prefix(currentUpNextSlotCount)
-
-        upNextTask = Task { [weak self] in
-            guard let self else { return }
-            for slot in 0..<self.currentUpNextSlotCount {
-                if Task.isCancelled { break }
-                guard slot < visibleRows.count else {
-                    await MainActor.run {
-                        self.upNextImageViews[slot].image = nil
-                        self.upNextImageViews[slot].toolTip = nil
-                        self.upNextAssignedItemIDs[slot] = nil
-                    }
-                    continue
-                }
-                let itemRowIndex = visibleRows[visibleRows.index(visibleRows.startIndex, offsetBy: slot)]
-                guard self.items.indices.contains(itemRowIndex) else { continue }
-                let item = self.items[itemRowIndex]
-
-                await MainActor.run {
-                    self.upNextImageViews[slot].toolTip = item.filename
-                }
-                await self.loadUpNextThumbnail(item: item, slot: slot)
-            }
-        }
-    }
-
-    /// Clicking an "Up Next" thumbnail jumps the table's selection straight
-    /// to that file — looked up by id (not the slot's list position) since
-    /// the list could in principle have changed between generating the
-    /// thumbnail and the click landing.
     private func selectUpNextSlot(_ slot: Int) {
         guard slot < upNextAssignedItemIDs.count, let itemID = upNextAssignedItemIDs[slot] else { return }
         guard let targetRow = items.firstIndex(where: { $0.id == itemID }) else { return }
         tableView.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
         tableView.scrollRowToVisible(targetRow)
-        view.window?.makeFirstResponder(tableView) // keep keyboard shortcuts working right after the click
+        view.window?.makeFirstResponder(tableView)
     }
 
-    private func loadUpNextThumbnail(item: MediaItem, slot: Int) async {
-        upNextAssignedItemIDs[slot] = item.id
-        let key = cacheKey(id: item.id, percent: upNextPercent)
-        if let cached = thumbnailCache.object(forKey: key) {
-            upNextImageViews[slot].image = cached
-            return
-        }
-
-        upNextImageViews[slot].image = nil
-        let requestedID = item.id
-        let url = URL(fileURLWithPath: item.fullPath(root: rootDir))
-
-        let asset = AVURLAsset(url: url)
-        guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else { return }
-        if Task.isCancelled { return }
-
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = .zero
-
-        let seconds = durationSeconds * Double(self.upNextPercent) / 100
-        guard let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) else { return }
-        if Task.isCancelled { return }
-
-        self.thumbnailCache.setObject(image, forKey: key)
-
-        await MainActor.run {
-            // The slot may have been reassigned to a different file (list
-            // re-sorted, selection moved, window shrank) while this ran.
-            guard slot < self.upNextAssignedItemIDs.count,
-                  self.upNextAssignedItemIDs[slot] == requestedID else { return }
-            self.upNextImageViews[slot].image = image
-        }
+    private func refreshUpNext() {
+        refreshThumbnails()
     }
 
-    // MARK: - Preview (filmstrip via AVFoundation, with an ffmpeg fallback)
+    /// Fully sequential generation for IO-bound/network-drive scenarios:
+    /// First generates preview thumbnails for the selected video in order (15%, 30%, 45%, 60%, 75%, 90%),
+    /// then sequentially generates "Up Next" preview thumbnails in order for upcoming items.
+    private func refreshThumbnails() {
+        thumbnailGenerationTask?.cancel()
+        thumbnailGenerationTask = nil
 
-    /// Refreshes every row of the filmstrip for the newly selected item.
-    /// Already-cached frames apply instantly; anything missing is generated
-    /// (in parallel) and filled in as it completes.
-    private func updatePreview(for item: MediaItem?) {
-        previewTask?.cancel()
-        previewTask = nil
+        let row = selectedRow
+        let selectedItem = (row != nil && items.indices.contains(row!)) ? items[row!] : nil
 
-        guard let item else {
+        guard let selectedItem else {
             previewLabel.stringValue = ""
             for imageView in previewImageViews.values { imageView.image = nil }
+            for imageView in upNextImageViews { imageView.image = nil }
+            upNextAssignedItemIDs = Array(repeating: nil, count: upNextMaxSlots)
             return
         }
 
-        previewLabel.stringValue = item.filename
-        let requestedID = item.id
-        let url = URL(fileURLWithPath: item.fullPath(root: rootDir))
+        previewLabel.stringValue = selectedItem.filename
 
-        var percentsNeeded: [Int] = []
+        // Apply instant cached images to Preview and Up Next
+        var filmstripPercentsToLoad: [Int] = []
         for percent in previewPercentages {
-            guard let imageView = previewImageViews[percent] else { continue }
-            if let cached = thumbnailCache.object(forKey: cacheKey(id: requestedID, percent: percent)) {
-                imageView.image = cached
+            if let cached = thumbnailCache.object(forKey: cacheKey(id: selectedItem.id, percent: percent)) {
+                previewImageViews[percent]?.image = cached
             } else {
-                imageView.image = nil
-                percentsNeeded.append(percent)
+                previewImageViews[percent]?.image = nil
+                filmstripPercentsToLoad.append(percent)
             }
         }
-        guard !percentsNeeded.isEmpty else { return }
 
-        previewTask = Task { [weak self] in
-            guard let self else { return }
-            let asset = AVURLAsset(url: url)
-            guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else {
-                print("Preview generation failed for \(url.path): couldn't determine duration " +
-                      "(AVFoundation can't parse this format, and ffprobe either isn't installed or failed too)")
-                return
+        let selectedIndex = row!
+        let visibleUpNextRows = (currentUpNextSlotCount > 0) ? Array(Array(selectedIndex..<items.count).prefix(currentUpNextSlotCount)) : []
+
+        for slot in 0..<upNextMaxSlots {
+            if slot < visibleUpNextRows.count {
+                let itemIndex = visibleUpNextRows[slot]
+                let item = items[itemIndex]
+                upNextAssignedItemIDs[slot] = item.id
+                upNextImageViews[slot].toolTip = item.filename
+                let key = cacheKey(id: item.id, percent: upNextPercent)
+                if let cached = thumbnailCache.object(forKey: key) {
+                    upNextImageViews[slot].image = cached
+                } else {
+                    upNextImageViews[slot].image = nil
+                }
+            } else {
+                upNextImageViews[slot].image = nil
+                upNextImageViews[slot].toolTip = nil
+                upNextAssignedItemIDs[slot] = nil
             }
-            if Task.isCancelled { return }
+        }
 
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.requestedTimeToleranceBefore = .zero
-            generator.requestedTimeToleranceAfter = .zero
+        thumbnailGenerationTask = Task { [weak self] in
+            guard let self else { return }
 
-            await withTaskGroup(of: (Int, NSImage?).self) { group in
-                for percent in percentsNeeded {
-                    group.addTask {
-                        if Task.isCancelled { return (percent, nil) }
+            // 1. Generate preview thumbnails for the SELECTED video sequentially in order
+            if !filmstripPercentsToLoad.isEmpty {
+                let url = URL(fileURLWithPath: selectedItem.fullPath(root: self.rootDir))
+                let asset = AVURLAsset(url: url)
+                if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
+                    let generator = AVAssetImageGenerator(asset: asset)
+                    generator.appliesPreferredTrackTransform = true
+                    generator.requestedTimeToleranceBefore = .zero
+                    generator.requestedTimeToleranceAfter = .zero
+
+                    for percent in filmstripPercentsToLoad {
+                        if Task.isCancelled { return }
+                        let key = self.cacheKey(id: selectedItem.id, percent: percent)
+                        if self.thumbnailCache.object(forKey: key) != nil { continue }
+
                         let seconds = durationSeconds * Double(percent) / 100
-                        let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds)
-                        return (percent, image)
+                        if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                            if Task.isCancelled { return }
+                            self.thumbnailCache.setObject(image, forKey: key)
+                            await MainActor.run {
+                                guard let currentRow = self.selectedRow,
+                                      self.items.indices.contains(currentRow),
+                                      self.items[currentRow].id == selectedItem.id else { return }
+                                self.previewImageViews[percent]?.image = image
+                            }
+                        }
                     }
                 }
-                for await (percent, image) in group {
-                    if Task.isCancelled { break }
-                    guard let image else { continue }
-                    self.thumbnailCache.setObject(image, forKey: self.cacheKey(id: requestedID, percent: percent))
+            }
+
+            // 2. Generate UP NEXT thumbnails sequentially in order
+            for slot in 0..<self.currentUpNextSlotCount {
+                if Task.isCancelled { return }
+                guard slot < visibleUpNextRows.count else { continue }
+                let itemIndex = visibleUpNextRows[slot]
+                guard self.items.indices.contains(itemIndex) else { continue }
+                let item = self.items[itemIndex]
+
+                let key = self.cacheKey(id: item.id, percent: self.upNextPercent)
+                if self.thumbnailCache.object(forKey: key) != nil { continue }
+
+                let url = URL(fileURLWithPath: item.fullPath(root: self.rootDir))
+                let asset = AVURLAsset(url: url)
+                guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else { continue }
+                if Task.isCancelled { return }
+
+                let generator = AVAssetImageGenerator(asset: asset)
+                generator.appliesPreferredTrackTransform = true
+                generator.requestedTimeToleranceBefore = .zero
+                generator.requestedTimeToleranceAfter = .zero
+
+                let seconds = durationSeconds * Double(self.upNextPercent) / 100
+                if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                    if Task.isCancelled { return }
+                    self.thumbnailCache.setObject(image, forKey: key)
                     await MainActor.run {
-                        // Skip if the selection moved on while we were generating.
-                        guard let row = self.selectedRow, self.items.indices.contains(row),
-                              self.items[row].id == requestedID,
-                              let imageView = self.previewImageViews[percent] else { return }
-                        imageView.image = image
+                        guard slot < self.upNextAssignedItemIDs.count,
+                              self.upNextAssignedItemIDs[slot] == item.id else { return }
+                        self.upNextImageViews[slot].image = image
                     }
                 }
             }
@@ -1020,9 +977,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = tableView.selectedRow
-        updatePreview(for: (row >= 0 && items.indices.contains(row)) ? items[row] : nil)
-        refreshUpNext()
+        refreshThumbnails()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
