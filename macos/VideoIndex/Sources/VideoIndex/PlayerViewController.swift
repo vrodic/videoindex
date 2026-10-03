@@ -77,18 +77,16 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     private var mpvAutofitSize = "75%x75%" // options: "50%x50%", "75%x75%", "100%x100%", "fullscreen"
     private var mpvSpeed = "1.0"           // options: "1.0", "1.25", "1.5", "2.0"
 
-    // "Up Next" strip: one thumbnail per upcoming file (after the current
-    // selection), to the left of the percentage filmstrip. Non-scrolling —
-    // it only ever shows as many rows as fit the pane's current height.
+    // "Up Next" strip: current video + 9 upcoming videos (10 total),
+    // displayed in a scrollable column.
     private let upNextContainer = NSView()
     private let upNextLabel = NSTextField(labelWithString: "Up Next")
     private let upNextRowAspect: CGFloat = 9.0 / 16.0
     private let upNextRowSpacing: CGFloat = 8
-    private let upNextMaxSlots = 24 // generous cap; real count is fit-to-height
+    private let upNextMaxSlots = 10 // current video + 9 next videos
     private let upNextPercent = 45  // shares a cache bucket with the 45% filmstrip row
     private var upNextImageViews: [ClickableThumbnailView] = []
     private var upNextAssignedItemIDs: [Int?] = []
-    private var currentUpNextSlotCount = -1 // -1 = not computed yet
 
     private let columnDefinitions: [(id: String, title: String, width: CGFloat)] = [
         ("id", "ID", 60),
@@ -140,9 +138,6 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             }
         }
 
-        // The window (or the divider) may have changed height/width since
-        // the last pass, which can change how many "Up Next" rows fit.
-        updateUpNextSlotCount()
     }
 
     // MARK: - UI construction
@@ -226,10 +221,9 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         ])
     }
 
-    /// Right-hand panel: an "Up Next" column (one frame per upcoming file,
-    /// non-scrolling — see updateUpNextSlotCount) to the left of a
-    /// scrollable filmstrip of frames from the *selected* file, both grabbed
-    /// with AVFoundation (AVAssetImageGenerator, ffmpeg as fallback).
+    /// Right-hand panel: an "Up Next" column (scrollable pool of 10 thumbnails)
+    /// to the left of a scrollable filmstrip of frames from the *selected* file,
+    /// both grabbed with AVFoundation (AVAssetImageGenerator, ffmpeg as fallback).
     private func buildPreviewPanel() {
         buildUpNextColumn()
 
@@ -322,9 +316,8 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         ])
     }
 
-    /// Builds the fixed-width "Up Next" column: a heading plus a pool of
-    /// `upNextMaxSlots` image views, all hidden until
-    /// `updateUpNextSlotCount()` reveals however many actually fit.
+    /// Builds the "Up Next" column: a fixed header label at the top, plus
+    /// a scrollable pool of `upNextMaxSlots` (10) thumbnail image views.
     private func buildUpNextColumn() {
         upNextLabel.font = .boldSystemFont(ofSize: 12)
         upNextLabel.textColor = .labelColor
@@ -344,7 +337,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             imageView.layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
             imageView.layer?.cornerRadius = 4
             imageView.translatesAutoresizingMaskIntoConstraints = false
-            imageView.isHidden = true
+            imageView.isHidden = false
             imageView.onClick = { [weak self] in self?.selectUpNextSlot(slot) }
             if slot == 0 {
                 // Slot 0 always shows the current selection (see
@@ -360,22 +353,30 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor, multiplier: upNextRowAspect).isActive = true
         }
 
+        let upNextScrollView = NSScrollView()
+        upNextScrollView.hasVerticalScroller = true
+        upNextScrollView.hasHorizontalScroller = false
+        upNextScrollView.drawsBackground = false
+        upNextScrollView.translatesAutoresizingMaskIntoConstraints = false
+        upNextScrollView.documentView = stack
+
         upNextContainer.translatesAutoresizingMaskIntoConstraints = false
         upNextContainer.addSubview(upNextLabel)
-        upNextContainer.addSubview(stack)
+        upNextContainer.addSubview(upNextScrollView)
 
         NSLayoutConstraint.activate([
             upNextLabel.topAnchor.constraint(equalTo: upNextContainer.topAnchor),
             upNextLabel.leadingAnchor.constraint(equalTo: upNextContainer.leadingAnchor),
             upNextLabel.trailingAnchor.constraint(equalTo: upNextContainer.trailingAnchor),
 
-            // No bottom pin on the stack: hidden slots take no space, so it's
-            // simply as tall as whatever's currently visible — shorter than
-            // upNextContainer itself, which is fine, since upNextContainer's
-            // own height comes from its own top/bottom pins, not this stack.
-            stack.topAnchor.constraint(equalTo: upNextLabel.bottomAnchor, constant: 6),
-            stack.leadingAnchor.constraint(equalTo: upNextContainer.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: upNextContainer.trailingAnchor),
+            upNextScrollView.topAnchor.constraint(equalTo: upNextLabel.bottomAnchor, constant: 6),
+            upNextScrollView.leadingAnchor.constraint(equalTo: upNextContainer.leadingAnchor),
+            upNextScrollView.trailingAnchor.constraint(equalTo: upNextContainer.trailingAnchor),
+            upNextScrollView.bottomAnchor.constraint(equalTo: upNextContainer.bottomAnchor),
+
+            stack.topAnchor.constraint(equalTo: upNextScrollView.contentView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: upNextScrollView.contentView.leadingAnchor),
+            stack.widthAnchor.constraint(equalTo: upNextScrollView.contentView.widthAnchor)
         ])
     }
 
@@ -514,26 +515,6 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
     // MARK: - Up Next & Preview Sequential Thumbnail Generation
 
-    private func updateUpNextSlotCount() {
-        let availableHeight = upNextContainer.bounds.height - upNextLabel.fittingSize.height - 6
-        guard availableHeight > 0 else {
-            setUpNextSlotCount(0)
-            return
-        }
-        let rowHeight = upNextContainer.bounds.width * upNextRowAspect
-        let slots = (availableHeight + upNextRowSpacing) / (rowHeight + upNextRowSpacing)
-        setUpNextSlotCount(max(0, min(upNextMaxSlots, Int(slots.rounded(.down)))))
-    }
-
-    private func setUpNextSlotCount(_ count: Int) {
-        guard count != currentUpNextSlotCount else { return }
-        currentUpNextSlotCount = count
-        for (index, imageView) in upNextImageViews.enumerated() {
-            imageView.isHidden = index >= count
-        }
-        refreshThumbnails()
-    }
-
     private func selectUpNextSlot(_ slot: Int) {
         guard slot < upNextAssignedItemIDs.count, let itemID = upNextAssignedItemIDs[slot] else { return }
         guard let targetRow = items.firstIndex(where: { $0.id == itemID }) else { return }
@@ -578,7 +559,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         }
 
         let selectedIndex = row!
-        let visibleUpNextRows = (currentUpNextSlotCount > 0) ? Array(Array(selectedIndex..<items.count).prefix(currentUpNextSlotCount)) : []
+        let visibleUpNextRows = Array(Array(selectedIndex..<items.count).prefix(upNextMaxSlots))
 
         for slot in 0..<upNextMaxSlots {
             if slot < visibleUpNextRows.count {
@@ -586,6 +567,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                 let item = items[itemIndex]
                 upNextAssignedItemIDs[slot] = item.id
                 upNextImageViews[slot].toolTip = item.filename
+                upNextImageViews[slot].isHidden = false
                 let key = cacheKey(id: item.id, percent: upNextPercent)
                 if let cached = thumbnailCache.object(forKey: key) {
                     upNextImageViews[slot].image = cached
@@ -595,6 +577,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             } else {
                 upNextImageViews[slot].image = nil
                 upNextImageViews[slot].toolTip = nil
+                upNextImageViews[slot].isHidden = true
                 upNextAssignedItemIDs[slot] = nil
             }
         }
@@ -633,10 +616,9 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             }
 
 
-            // 2. Generate UP NEXT thumbnails sequentially in order
-            for slot in 0..<self.currentUpNextSlotCount {
+            // 2. Generate UP NEXT thumbnails sequentially in order for up to 10 slots
+            for slot in 0..<visibleUpNextRows.count {
                 if Task.isCancelled { return }
-                guard slot < visibleUpNextRows.count else { continue }
                 let itemIndex = visibleUpNextRows[slot]
                 guard self.items.indices.contains(itemIndex) else { continue }
                 let item = self.items[itemIndex]
