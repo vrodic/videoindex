@@ -793,7 +793,8 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
     @objc func openWordCloud(_ sender: Any?) {
         let wordFrequencies = db.fetchWordFrequencies()
-        let controller = WordCloudWindowController(wordFrequencies: wordFrequencies)
+        let nameFrequencies = db.fetchNameFrequencies()
+        let controller = WordCloudWindowController(wordFrequencies: wordFrequencies, nameFrequencies: nameFrequencies)
         controller.onSelectWord = { [weak self] selectedWord in
             guard let self else { return }
             self.searchField.stringValue = selectedWord

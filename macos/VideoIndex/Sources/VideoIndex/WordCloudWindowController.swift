@@ -140,21 +140,29 @@ final class WordCloudFlowView: NSView {
 final class WordCloudWindowController: NSWindowController, NSWindowDelegate {
     var onSelectWord: ((String) -> Void)?
 
-    private let allWords: [(word: String, count: Int)]
+    private let allSingleWords: [(word: String, count: Int)]
+    private let allNamePairs: [(word: String, count: Int)]
+
+    private var activeWords: [(word: String, count: Int)] {
+        modeControl.selectedSegment == 1 ? allNamePairs : allSingleWords
+    }
+
     private let pageSize = 200
     private var currentPage = 0
     private var totalPages: Int {
-        max(1, Int(ceil(Double(allWords.count) / Double(pageSize))))
+        max(1, Int(ceil(Double(activeWords.count) / Double(pageSize))))
     }
 
+    private let modeControl = NSSegmentedControl(labels: ["All Words", "Full Names (first_last)"], trackingMode: .selectOne, target: nil, action: nil)
     private let scrollView = NSScrollView()
     private let flowView = WordCloudFlowView(frame: NSRect(x: 0, y: 0, width: 1000, height: 600))
     private let prevButton = NSButton(title: "← Previous", target: nil, action: nil)
     private let nextButton = NSButton(title: "Next →", target: nil, action: nil)
     private let pageLabel = NSTextField(labelWithString: "")
 
-    init(wordFrequencies: [(word: String, count: Int)]) {
-        self.allWords = wordFrequencies
+    init(wordFrequencies: [(word: String, count: Int)], nameFrequencies: [(word: String, count: Int)]) {
+        self.allSingleWords = wordFrequencies
+        self.allNamePairs = nameFrequencies
 
         // Calculate 90% of main screen frame
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
@@ -199,6 +207,11 @@ final class WordCloudWindowController: NSWindowController, NSWindowDelegate {
             self?.close()
         }
 
+        modeControl.selectedSegment = 0
+        modeControl.target = self
+        modeControl.action = #selector(modeControlChanged(_:))
+        modeControl.translatesAutoresizingMaskIntoConstraints = false
+
         scrollView.documentView = flowView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -224,11 +237,15 @@ final class WordCloudWindowController: NSWindowController, NSWindowDelegate {
         bottomStack.distribution = .fillProportionally
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
 
+        contentView.addSubview(modeControl)
         contentView.addSubview(scrollView)
         contentView.addSubview(bottomStack)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
+            modeControl.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            modeControl.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+
+            scrollView.topAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: 10),
             scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 10),
             scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10),
             scrollView.bottomAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -10),
@@ -240,18 +257,24 @@ final class WordCloudWindowController: NSWindowController, NSWindowDelegate {
         ])
     }
 
+    @objc private func modeControlChanged(_ sender: NSSegmentedControl) {
+        currentPage = 0
+        updatePage()
+    }
+
     func windowDidResize(_ notification: Notification) {
         let width = scrollView.contentSize.width > 0 ? scrollView.contentSize.width : scrollView.bounds.width
         flowView.layoutWords(width: width)
     }
 
     private func updatePage() {
+        let currentWords = activeWords
         let startIndex = currentPage * pageSize
-        let endIndex = min(startIndex + pageSize, allWords.count)
+        let endIndex = min(startIndex + pageSize, currentWords.count)
 
         let pageWords: [(word: String, count: Int)]
-        if startIndex < allWords.count {
-            pageWords = Array(allWords[startIndex..<endIndex])
+        if startIndex < currentWords.count {
+            pageWords = Array(currentWords[startIndex..<endIndex])
         } else {
             pageWords = []
         }
@@ -265,10 +288,10 @@ final class WordCloudWindowController: NSWindowController, NSWindowDelegate {
         prevButton.isEnabled = currentPage > 0
         nextButton.isEnabled = currentPage < totalPages - 1
 
-        if allWords.isEmpty {
+        if currentWords.isEmpty {
             pageLabel.stringValue = "No words found"
         } else {
-            pageLabel.stringValue = "Page \(currentPage + 1) of \(totalPages) (\(allWords.count) total words)"
+            pageLabel.stringValue = "Page \(currentPage + 1) of \(totalPages) (\(currentWords.count) total)"
         }
     }
 
