@@ -11,10 +11,23 @@ final class CustomTableRowView: NSTableRowView {
         }
     }
 
+    var isSessionPlayed: Bool = false {
+        didSet {
+            if oldValue != isSessionPlayed {
+                needsDisplay = true
+            }
+        }
+    }
+
     override func drawBackground(in dirtyRect: NSRect) {
         super.drawBackground(in: dirtyRect)
-        if isViewed {
-            // Subtle, pleasant highlight that adapts to light/dark modes
+        if isSessionPlayed {
+            // Distinct, pleasant green tint for videos played during the active session
+            let sessionPlayedBackgroundColor = NSColor.systemGreen.withAlphaComponent(0.18)
+            sessionPlayedBackgroundColor.setFill()
+            dirtyRect.fill()
+        } else if isViewed {
+            // Subtle blue tint for previously viewed videos
             let viewedBackgroundColor = NSColor.systemBlue.withAlphaComponent(0.12)
             viewedBackgroundColor.setFill()
             dirtyRect.fill()
@@ -50,6 +63,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     private var didSetInitialSplitPosition = false
 
     private var thumbnailGenerationTask: Task<Void, Never>?
+    private var sessionPlayedIDs: Set<Int> = []
 
     // MPV options state
     private var mpvVolumeMax1000 = true
@@ -947,6 +961,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         // already updates on every play; this line keeps the in-memory row —
         // and so the visible "Last Viewed" column — in sync with it immediately,
         // rather than only on the next full reload.
+        sessionPlayedIDs.insert(item.id)
         let newCount = (item.viewCount ?? 0) + 1
         item.viewCount = newCount
         item.viewedTime = Self.sqliteNowString()
@@ -1045,8 +1060,10 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
             let item = items[row]
             let isViewed = (item.viewCount ?? 0) > 0 || (item.viewedTime != nil && !item.viewedTime!.isEmpty)
             rowView.isViewed = isViewed
+            rowView.isSessionPlayed = sessionPlayedIDs.contains(item.id)
         } else {
             rowView.isViewed = false
+            rowView.isSessionPlayed = false
         }
         return rowView
     }
