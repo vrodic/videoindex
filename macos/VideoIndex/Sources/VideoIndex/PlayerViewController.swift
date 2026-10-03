@@ -392,7 +392,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         imageView.layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
         imageView.layer?.cornerRadius = 4
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.onClick = { [weak self] in self?.playSelected() }
+        imageView.onClick = { [weak self] in self?.playSelected(startPercent: percent) }
 
         let caption = NSTextField(labelWithString: "\(percent)%")
         caption.font = .systemFont(ofSize: 10)
@@ -902,12 +902,15 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         return true
     }
 
-    private func playSelected() {
+    private func playSelected(startPercent: Int? = nil) {
         guard let row = selectedRow, items.indices.contains(row) else { return }
         var item = items[row]
         let path = item.fullPath(root: rootDir)
 
         var args = ["mpv"]
+        if let startPercent {
+            args.append("--start=\(startPercent)%")
+        }
         if mpvVolumeMax1000 {
             args.append("--volume-max=1000")
         }
