@@ -110,6 +110,102 @@ final class Database {
         sqlite3_step(statement)
     }
 
+    /// Fetches full name (first_last) frequencies from all filenames in the database.
+    /// Returns an array of (name_pair, count) sorted by count descending.
+    func fetchNameFrequencies() -> [(word: String, count: Int)] {
+        let sql = "SELECT filename FROM media WHERE 1=1 \(extraConditions)"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            return []
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var nameCounts: [String: Int] = [:]
+        let commonExtensions: Set<String> = [
+            "mp4", "mkv", "avi", "wmv", "mov", "flv", "webm", "mpg", "mpeg",
+            "m4v", "ts", "3gp", "vob", "divx", "xvid", "zip", "rar", "jpg", "jpeg", "png"
+        ]
+
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let filename = columnText(statement, 0) else { continue }
+
+            let rawComponents = filename.components(separatedBy: CharacterSet.alphanumerics.inverted)
+
+            var validWords: [String] = []
+            for raw in rawComponents {
+                let word = raw.lowercased()
+                if word.count <= 2 { continue }
+                if commonExtensions.contains(word) { continue }
+                if Double(word) != nil { continue } // ignore pure numbers
+                validWords.append(word)
+            }
+
+            guard validWords.count >= 2 else { continue }
+
+            var uniqueNamesInFile = Set<String>()
+            for i in 0..<(validWords.count - 1) {
+                let namePair = "\(validWords[i])_\(validWords[i+1])"
+                uniqueNamesInFile.insert(namePair)
+            }
+
+            for namePair in uniqueNamesInFile {
+                nameCounts[namePair, default: 0] += 1
+            }
+        }
+
+        return nameCounts.map { (word: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count != $1.count {
+                    return $0.count > $1.count
+                }
+                return $0.word < $1.word
+            }
+    }
+
+    /// Fetches word frequencies from all filenames in the database.
+    /// Returns an array of (word, count) sorted by count descending.
+    func fetchWordFrequencies() -> [(word: String, count: Int)] {
+        let sql = "SELECT filename FROM media WHERE 1=1 \(extraConditions)"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            return []
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var wordCounts: [String: Int] = [:]
+        let commonExtensions: Set<String> = [
+            "mp4", "mkv", "avi", "wmv", "mov", "flv", "webm", "mpg", "mpeg",
+            "m4v", "ts", "3gp", "vob", "divx", "xvid", "zip", "rar", "jpg", "jpeg", "png"
+        ]
+
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let filename = columnText(statement, 0) else { continue }
+
+            // Split by non-alphanumeric characters
+            let components = filename.components(separatedBy: CharacterSet.alphanumerics.inverted)
+
+            var uniqueWordsInFile = Set<String>()
+            for rawComponent in components {
+                let word = rawComponent.lowercased()
+                if word.count <= 2 { continue }
+                if commonExtensions.contains(word) { continue }
+                uniqueWordsInFile.insert(word)
+            }
+
+            for word in uniqueWordsInFile {
+                wordCounts[word, default: 0] += 1
+            }
+        }
+
+        return wordCounts.map { (word: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count != $1.count {
+                    return $0.count > $1.count
+                }
+                return $0.word < $1.word
+            }
+    }
+
     /// SQLite auto-commits each statement by default, so this is a no-op —
     /// kept only for parity with the Python code's explicit connection.commit().
     func commit() {}

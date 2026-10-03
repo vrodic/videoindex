@@ -77,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let selectAllItem = NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
         let findItem = NSMenuItem(title: "Find...", action: Selector(("focusSearchField:")), keyEquivalent: "f")
+        let wordCloudItem = NSMenuItem(title: "Word Cloud Search...", action: Selector(("openWordCloud:")), keyEquivalent: "k")
         let editConditionItem = NSMenuItem(title: "Edit Condition...", action: Selector(("focusConditionField:")), keyEquivalent: "l")
 
         editMenu.addItem(undoItem)
@@ -89,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(selectAllItem)
         editMenu.addItem(NSMenuItem.separator())
         editMenu.addItem(findItem)
+        editMenu.addItem(wordCloudItem)
         editMenu.addItem(editConditionItem)
 
         editMenuItem.submenu = editMenu

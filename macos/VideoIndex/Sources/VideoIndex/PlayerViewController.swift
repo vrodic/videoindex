@@ -47,8 +47,11 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     private let tableView = ShortcutTableView()
     private let scrollView = NSScrollView()
     private let searchField = NSTextField()
+    private let wordCloudButton = NSButton(title: "Word Cloud", target: nil, action: nil)
     private let conditionField = NSTextField()
     private let statusLabel = NSTextField(labelWithString: "")
+
+    private var wordCloudWindowController: WordCloudWindowController?
 
     private let splitViewAutosaveName = "VideoIndexMainSplit"
     private let splitView = NSSplitView()
@@ -168,6 +171,11 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         searchField.allowsEditingTextAttributes = true
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
+        wordCloudButton.bezelStyle = .rounded
+        wordCloudButton.target = self
+        wordCloudButton.action = #selector(openWordCloud(_:))
+        wordCloudButton.translatesAutoresizingMaskIntoConstraints = false
+
         conditionField.placeholderString = "SQL condition / ORDER BY…"
         conditionField.delegate = self
         conditionField.allowsEditingTextAttributes = true
@@ -199,6 +207,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(searchField)
+        view.addSubview(wordCloudButton)
         view.addSubview(splitView)
         view.addSubview(conditionField)
         view.addSubview(statusLabel)
@@ -206,7 +215,11 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         NSLayoutConstraint.activate([
             searchField.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
             searchField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            searchField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            searchField.trailingAnchor.constraint(equalTo: wordCloudButton.leadingAnchor, constant: -8),
+
+            wordCloudButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
+            wordCloudButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            wordCloudButton.widthAnchor.constraint(equalToConstant: 110),
 
             splitView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10),
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
@@ -777,6 +790,22 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     }
 
     // MARK: - Actions & Responder Chain Menu Handlers
+
+    @objc func openWordCloud(_ sender: Any?) {
+        let wordFrequencies = db.fetchWordFrequencies()
+        let nameFrequencies = db.fetchNameFrequencies()
+        let controller = WordCloudWindowController(wordFrequencies: wordFrequencies, nameFrequencies: nameFrequencies)
+        controller.onSelectWord = { [weak self] selectedWord in
+            guard let self else { return }
+            self.searchField.stringValue = selectedWord
+            self.searchTerm = selectedWord
+            self.reload()
+        }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        self.wordCloudWindowController = controller
+    }
 
     @objc func reloadQuery(_ sender: Any?) {
         tableView.sortDescriptors = []
