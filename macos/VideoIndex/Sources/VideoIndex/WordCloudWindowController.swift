@@ -1,47 +1,71 @@
 import Cocoa
 
-/// Custom view that arranges word buttons in a flowing grid/wrap layout
+/// Custom interactive label for a word in the cloud
+final class ClickableWordView: NSTextField {
+    var onSelect: (() -> Void)?
+
+    init(word: String, count: Int, attributedTitle: NSAttributedString) {
+        super.init(frame: .zero)
+        self.stringValue = ""
+        self.attributedStringValue = attributedTitle
+        self.toolTip = "\(word) appears in \(count) files"
+        self.isSelectable = false
+        self.isEditable = false
+        self.drawsBackground = false
+        self.isBordered = false
+        self.isBezeled = false
+        self.lineBreakMode = .byClipping
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onSelect?()
+    }
+}
+
+/// Custom container view that arranges word views in a flowing grid/wrap layout
 final class WordCloudFlowView: NSView {
     var onSelectWord: ((String) -> Void)?
 
     private var words: [(word: String, count: Int)] = []
-    private var maxCount: Int = 1
-    private var minCount: Int = 1
-    private var buttons: [NSButton] = []
+    private var itemViews: [ClickableWordView] = []
 
     override var isFlipped: Bool { true }
 
-    func setWords(_ newWords: [(word: String, count: Int)], globalMaxCount: Int) {
+    func setWords(_ newWords: [(word: String, count: Int)], width: CGFloat) {
         words = newWords
-        maxCount = max(globalMaxCount, 1)
-        minCount = max(words.last?.count ?? 1, 1)
 
-        // Remove old buttons
+        // Remove old views
         subviews.forEach { $0.removeFromSuperview() }
-        buttons.removeAll()
+        itemViews.removeAll()
+
+        let pageMax = words.first?.count ?? 1
+        let pageMin = words.last?.count ?? 1
 
         for (word, count) in words {
-            let button = NSButton(title: word, target: self, action: #selector(wordClicked(_:)))
-            button.isBordered = false
-            button.wantsLayer = true
-            button.layer?.backgroundColor = NSColor.clear.cgColor
-            button.alignment = .center
-
-            // Calculate font size (range 14 - 48 pt)
+            // Calculate font size (range 14 - 44 pt) based on current page distribution
             let minFontSize: CGFloat = 14
-            let maxFontSize: CGFloat = 48
+            let maxFontSize: CGFloat = 44
             let fontSize: CGFloat
-            if maxCount > minCount {
-                let ratio = CGFloat(count - minCount) / CGFloat(maxCount - minCount)
+            let ratio: CGFloat
+            if pageMax > pageMin {
+                ratio = CGFloat(count - pageMin) / CGFloat(pageMax - pageMin)
                 fontSize = minFontSize + ratio * (maxFontSize - minFontSize)
             } else {
+                ratio = 0.5
                 fontSize = 20
             }
 
-            let font = NSFont.systemFont(ofSize: fontSize, weight: count >= maxCount / 2 ? .bold : .regular)
-
-            // Assign color based on frequency ratio
-            let color = colorForCount(count, maxCount: maxCount)
+            let font = NSFont.systemFont(ofSize: fontSize, weight: ratio >= 0.5 ? .bold : .regular)
+            let color = colorForRatio(ratio)
 
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: font,
@@ -49,81 +73,71 @@ final class WordCloudFlowView: NSView {
                 .underlineStyle: NSUnderlineStyle.single.rawValue
             ]
 
-            button.attributedTitle = NSAttributedString(string: "\(word) (\(count))", attributes: attributes)
-            button.toolTip = "\(word) appears in \(count) files"
+            let attrTitle = NSAttributedString(string: "\(word) (\(count))", attributes: attributes)
+            let itemView = ClickableWordView(word: word, count: count, attributedTitle: attrTitle)
+            itemView.onSelect = { [weak self] in
+                self?.onSelectWord?(word)
+            }
 
-            // Mouse cursor as hand pointer
-            button.addTrackingArea(NSTrackingArea(rect: button.bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: button, userInfo: nil))
-
-            buttons.append(button)
-            addSubview(button)
+            itemViews.append(itemView)
+            addSubview(itemView)
         }
 
-        needsLayout = true
+        layoutWords(width: width)
     }
 
-    private func colorForCount(_ count: Int, maxCount: Int) -> NSColor {
-        let ratio = Double(count) / Double(max(maxCount, 1))
-        if ratio > 0.7 {
-            return .systemPurple
-        } else if ratio > 0.4 {
-            return .systemRed
-        } else if ratio > 0.2 {
-            return .systemOrange
-        } else if ratio > 0.1 {
-            return .systemTeal
-        } else if ratio > 0.05 {
-            return .systemBlue
-        } else if ratio > 0.02 {
-            return .systemGreen
-        } else {
-            return .labelColor
-        }
-    }
-
-    @objc private func wordClicked(_ sender: NSButton) {
-        guard let index = buttons.firstIndex(of: sender), index < words.count else { return }
-        let selectedWord = words[index].word
-        onSelectWord?(selectedWord)
-    }
-
-    override func layout() {
-        super.layout()
-
+    func layoutWords(width: CGFloat) {
         let paddingX: CGFloat = 12
         let paddingY: CGFloat = 12
-        let boundsWidth = bounds.width > 0 ? bounds.width : 800
+        let boundsWidth = max(width, 600)
 
         var currentX: CGFloat = paddingX
         var currentY: CGFloat = paddingY
         var rowMaxHeight: CGFloat = 0
 
-        for button in buttons {
-            button.sizeToFit()
-            let btnWidth = button.frame.width
-            let btnHeight = button.frame.height
+        for itemView in itemViews {
+            let textSize = itemView.attributedStringValue.size()
+            let itemWidth = ceil(textSize.width) + 12
+            let itemHeight = ceil(textSize.height) + 8
 
-            if currentX + btnWidth + paddingX > boundsWidth, currentX > paddingX {
+            if currentX + itemWidth + paddingX > boundsWidth, currentX > paddingX {
                 // Move to next line
                 currentX = paddingX
                 currentY += rowMaxHeight + paddingY
                 rowMaxHeight = 0
             }
 
-            button.frame = NSRect(x: currentX, y: currentY, width: btnWidth, height: btnHeight)
-            currentX += btnWidth + paddingX
-            rowMaxHeight = max(rowMaxHeight, btnHeight)
+            itemView.frame = NSRect(x: currentX, y: currentY, width: itemWidth, height: itemHeight)
+            currentX += itemWidth + paddingX
+            rowMaxHeight = max(rowMaxHeight, itemHeight)
         }
 
         let totalHeight = currentY + rowMaxHeight + paddingY
-        if frame.height != totalHeight {
-            setFrameSize(NSSize(width: bounds.width, height: max(totalHeight, 400)))
+        let newHeight = max(totalHeight, 400)
+        setFrameSize(NSSize(width: boundsWidth, height: newHeight))
+    }
+
+    private func colorForRatio(_ ratio: CGFloat) -> NSColor {
+        if ratio > 0.8 {
+            return .systemPurple
+        } else if ratio > 0.6 {
+            return .systemRed
+        } else if ratio > 0.4 {
+            return .systemOrange
+        } else if ratio > 0.25 {
+            return .systemTeal
+        } else if ratio > 0.12 {
+            return .systemBlue
+        } else if ratio > 0.05 {
+            return .systemGreen
+        } else {
+            return .labelColor
         }
     }
 }
 
 /// Window controller managing the word cloud presentation and bottom pagination
-final class WordCloudWindowController: NSWindowController {
+final class WordCloudWindowController: NSWindowController, NSWindowDelegate {
     var onSelectWord: ((String) -> Void)?
 
     private let allWords: [(word: String, count: Int)]
@@ -134,7 +148,7 @@ final class WordCloudWindowController: NSWindowController {
     }
 
     private let scrollView = NSScrollView()
-    private let flowView = WordCloudFlowView()
+    private let flowView = WordCloudFlowView(frame: NSRect(x: 0, y: 0, width: 1000, height: 600))
     private let prevButton = NSButton(title: "← Previous", target: nil, action: nil)
     private let nextButton = NSButton(title: "Next →", target: nil, action: nil)
     private let pageLabel = NSTextField(labelWithString: "")
@@ -163,13 +177,18 @@ final class WordCloudWindowController: NSWindowController {
         window.minSize = NSSize(width: 600, height: 400)
 
         super.init(window: window)
+        window.delegate = self
 
         setupUI()
-        updatePage()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        updatePage()
     }
 
     private func setupUI() {
@@ -221,6 +240,11 @@ final class WordCloudWindowController: NSWindowController {
         ])
     }
 
+    func windowDidResize(_ notification: Notification) {
+        let width = scrollView.contentSize.width > 0 ? scrollView.contentSize.width : scrollView.bounds.width
+        flowView.layoutWords(width: width)
+    }
+
     private func updatePage() {
         let startIndex = currentPage * pageSize
         let endIndex = min(startIndex + pageSize, allWords.count)
@@ -232,8 +256,8 @@ final class WordCloudWindowController: NSWindowController {
             pageWords = []
         }
 
-        let globalMax = allWords.first?.count ?? 1
-        flowView.setWords(pageWords, globalMaxCount: globalMax)
+        let width = scrollView.contentSize.width > 0 ? scrollView.contentSize.width : (window?.contentView?.bounds.width ?? 1000) - 20
+        flowView.setWords(pageWords, width: width)
 
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
