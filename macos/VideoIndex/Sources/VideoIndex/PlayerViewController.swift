@@ -655,6 +655,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
         thumbnailGenerationTask = Task { [weak self] in
             guard let self else { return }
+            var pendingDiskSaves: [(image: NSImage, id: Int, percent: Int)] = []
 
             // 1. Generate preview thumbnails for the SELECTED video sequentially in order
             if !filmstripPercentsToLoad.isEmpty {
@@ -690,7 +691,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                             let seconds = durationSeconds * Double(percent) / 100
                             if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
                                 if Task.isCancelled { return }
-                                self.saveDiskThumbnail(image, id: selectedItem.id, percent: percent)
+                                pendingDiskSaves.append((image: image, id: selectedItem.id, percent: percent))
                                 self.thumbnailCache.setObject(image, forKey: key)
                                 await MainActor.run {
                                     guard let currentRow = self.selectedRow,
@@ -742,7 +743,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                 let seconds = durationSeconds * Double(self.upNextPercent) / 100
                 if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
                     if Task.isCancelled { return }
-                    self.saveDiskThumbnail(image, id: item.id, percent: self.upNextPercent)
+                    pendingDiskSaves.append((image: image, id: item.id, percent: self.upNextPercent))
                     self.thumbnailCache.setObject(image, forKey: self.cacheKey(id: item.id, percent: self.upNextPercent))
                     await MainActor.run {
                         guard slot < self.upNextAssignedItemIDs.count,
@@ -783,12 +784,18 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                             let seconds = durationSeconds * Double(percent) / 100
                             if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
                                 if Task.isCancelled { return }
-                                self.saveDiskThumbnail(image, id: nextItem.id, percent: percent)
+                                pendingDiskSaves.append((image: image, id: nextItem.id, percent: percent))
                                 self.thumbnailCache.setObject(image, forKey: key)
                             }
                         }
                     }
                 }
+            }
+
+            // Save all generated thumbnails to disk AFTER generation finishes
+            for save in pendingDiskSaves {
+                if Task.isCancelled { return }
+                self.saveDiskThumbnail(save.image, id: save.id, percent: save.percent)
             }
         }
     }
@@ -1220,7 +1227,6 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
         cell.textField?.stringValue = text
         let isMissing = missingFileIDs.contains(item.id)
         if isMissing {
-            missingFileIDs.insert(item.id)
             cell.textField?.textColor = .systemRed
         } else if identifier.rawValue == "likes" {
             switch item.like {
