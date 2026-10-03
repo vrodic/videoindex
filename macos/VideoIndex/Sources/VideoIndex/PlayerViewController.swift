@@ -1218,7 +1218,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
             ])
         }
         cell.textField?.stringValue = text
-        let isMissing = missingFileIDs.contains(item.id) || !FileManager.default.fileExists(atPath: item.fullPath(root: rootDir))
+        let isMissing = missingFileIDs.contains(item.id)
         if isMissing {
             missingFileIDs.insert(item.id)
             cell.textField?.textColor = .systemRed
