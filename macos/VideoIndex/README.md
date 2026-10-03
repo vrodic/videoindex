@@ -59,9 +59,8 @@ permanent accent-colored border to mark it as "current" rather than
 you'd hit next if you kept pressing Down. The two columns always split
 the pane's width equally (an Auto Layout `equalTo` constraint, not a
 fixed size), so dragging the main divider resizes both together.
-Unlike the filmstrip, "Up Next" doesn't scroll: it measures its own
-actual width and height and only generates as many rows as fit,
-growing or shrinking live as you resize. Hover a thumbnail to see its
+"Up Next" displays up to 10 thumbnails (the current video plus 9 upcoming videos)
+in a scrollable column. Hover a thumbnail to see its
 filename (cursor turns into a pointing hand) and **click it to jump
 the table's selection straight to that file** — clicking the bordered
 first one just re-selects the current row, harmlessly. Every thumbnail
@@ -145,6 +144,6 @@ Sources/VideoIndex/
 Preview generation (AVFoundation + ffmpeg fallback) lives directly in
 `PlayerViewController.swift`: `buildPreviewPanel()`/`updatePreview(for:)`
 for the filmstrip, `buildUpNextColumn()`/`refreshUpNext()` for the
-fit-to-height "Up Next" column, and the shared `loadDuration`/
+"Up Next" column, and the shared `loadDuration`/
 `generateFrame` helpers both use.
 ```
