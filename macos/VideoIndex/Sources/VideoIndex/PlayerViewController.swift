@@ -69,6 +69,70 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
     private var thumbnailGenerationTask: Task<Void, Never>?
     private var sessionPlayedIDs: Set<Int> = []
+    private var missingFileIDs: Set<Int> = []
+
+    private let saveThumbnailsToDiskKey = "SaveThumbnailsToDisk"
+    private var saveThumbnailsToDisk: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: saveThumbnailsToDiskKey) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: saveThumbnailsToDiskKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: saveThumbnailsToDiskKey)
+        }
+    }
+
+    private var thumbsDirectoryURL: URL {
+        URL(fileURLWithPath: rootDir).appendingPathComponent("Thumbs", isDirectory: true)
+    }
+
+    private func ensureThumbsDirectoryExists() {
+        try? FileManager.default.createDirectory(at: thumbsDirectoryURL, withIntermediateDirectories: true, attributes: nil)
+    }
+
+    private func diskThumbURL(id: Int, percent: Int) -> URL {
+        thumbsDirectoryURL.appendingPathComponent("\(id)_\(percent).jpg")
+    }
+
+    private func loadDiskThumbnail(id: Int, percent: Int) -> NSImage? {
+        let fileURL = diskThumbURL(id: id, percent: percent)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+        return NSImage(contentsOf: fileURL)
+    }
+
+    private func saveDiskThumbnail(_ image: NSImage, id: Int, percent: Int) {
+        guard saveThumbnailsToDisk else { return }
+        ensureThumbsDirectoryExists()
+        let fileURL = diskThumbURL(id: id, percent: percent)
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        let rep = NSBitmapImageRep(cgImage: cgImage)
+        if let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
+            try? data.write(to: fileURL)
+        }
+    }
+
+    private func getOrLoadThumbnail(id: Int, percent: Int) -> NSImage? {
+        let key = cacheKey(id: id, percent: percent)
+        if let cached = thumbnailCache.object(forKey: key) {
+            return cached
+        }
+        if let diskImage = loadDiskThumbnail(id: id, percent: percent) {
+            thumbnailCache.setObject(diskImage, forKey: key)
+            return diskImage
+        }
+        return nil
+    }
+
+    private func markMissingFile(id: Int) {
+        if !missingFileIDs.contains(id) {
+            missingFileIDs.insert(id)
+            if let row = items.firstIndex(where: { $0.id == id }) {
+                reloadRow(row)
+            }
+        }
+    }
 
     // MPV options state
     private var mpvVolumeMax1000 = true
@@ -161,6 +225,8 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         tableView.dataSource = self
         tableView.delegate = self
         tableView.shortcutHandler = self
+        tableView.autosaveName = "VideoIndexTableColumns"
+        tableView.autosaveTableColumns = true
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -245,6 +311,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         previewLabel.font = .boldSystemFont(ofSize: 12)
         previewLabel.textColor = .labelColor
         previewLabel.lineBreakMode = .byTruncatingMiddle
+        previewLabel.isSelectable = true
         previewLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView()
@@ -570,7 +637,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         // Apply instant cached images to Preview and Up Next
         var filmstripPercentsToLoad: [Int] = []
         for percent in previewPercentages {
-            if let cached = thumbnailCache.object(forKey: cacheKey(id: selectedItem.id, percent: percent)) {
+            if let cached = getOrLoadThumbnail(id: selectedItem.id, percent: percent) {
                 previewImageViews[percent]?.image = cached
             } else {
                 previewImageViews[percent]?.image = nil
@@ -588,8 +655,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                 upNextAssignedItemIDs[slot] = item.id
                 upNextImageViews[slot].toolTip = item.filename
                 upNextImageViews[slot].isHidden = false
-                let key = cacheKey(id: item.id, percent: upNextPercent)
-                if let cached = thumbnailCache.object(forKey: key) {
+                if let cached = getOrLoadThumbnail(id: item.id, percent: upNextPercent) {
                     upNextImageViews[slot].image = cached
                 } else {
                     upNextImageViews[slot].image = nil
@@ -604,31 +670,50 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
         thumbnailGenerationTask = Task { [weak self] in
             guard let self else { return }
+            var pendingDiskSaves: [(image: NSImage, id: Int, percent: Int)] = []
 
             // 1. Generate preview thumbnails for the SELECTED video sequentially in order
             if !filmstripPercentsToLoad.isEmpty {
-                let url = URL(fileURLWithPath: selectedItem.fullPath(root: self.rootDir))
-                let asset = AVURLAsset(url: url)
-                if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
-                    let generator = AVAssetImageGenerator(asset: asset)
-                    generator.appliesPreferredTrackTransform = true
-                    generator.requestedTimeToleranceBefore = .zero
-                    generator.requestedTimeToleranceAfter = .zero
+                let fullPath = selectedItem.fullPath(root: self.rootDir)
+                if !FileManager.default.fileExists(atPath: fullPath) {
+                    await MainActor.run {
+                        self.markMissingFile(id: selectedItem.id)
+                    }
+                } else {
+                    let url = URL(fileURLWithPath: fullPath)
+                    let asset = AVURLAsset(url: url)
+                    if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
+                        let generator = AVAssetImageGenerator(asset: asset)
+                        generator.appliesPreferredTrackTransform = true
+                        generator.requestedTimeToleranceBefore = .zero
+                        generator.requestedTimeToleranceAfter = .zero
 
-                    for percent in filmstripPercentsToLoad {
-                        if Task.isCancelled { return }
-                        let key = self.cacheKey(id: selectedItem.id, percent: percent)
-                        if self.thumbnailCache.object(forKey: key) != nil { continue }
-
-                        let seconds = durationSeconds * Double(percent) / 100
-                        if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                        for percent in filmstripPercentsToLoad {
                             if Task.isCancelled { return }
-                            self.thumbnailCache.setObject(image, forKey: key)
-                            await MainActor.run {
-                                guard let currentRow = self.selectedRow,
-                                      self.items.indices.contains(currentRow),
-                                      self.items[currentRow].id == selectedItem.id else { return }
-                                self.previewImageViews[percent]?.image = image
+                            let key = self.cacheKey(id: selectedItem.id, percent: percent)
+                            if self.thumbnailCache.object(forKey: key) != nil { continue }
+                            if let diskImage = self.loadDiskThumbnail(id: selectedItem.id, percent: percent) {
+                                self.thumbnailCache.setObject(diskImage, forKey: key)
+                                await MainActor.run {
+                                    guard let currentRow = self.selectedRow,
+                                          self.items.indices.contains(currentRow),
+                                          self.items[currentRow].id == selectedItem.id else { return }
+                                    self.previewImageViews[percent]?.image = diskImage
+                                }
+                                continue
+                            }
+
+                            let seconds = durationSeconds * Double(percent) / 100
+                            if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                                if Task.isCancelled { return }
+                                pendingDiskSaves.append((image: image, id: selectedItem.id, percent: percent))
+                                self.thumbnailCache.setObject(image, forKey: key)
+                                await MainActor.run {
+                                    guard let currentRow = self.selectedRow,
+                                          self.items.indices.contains(currentRow),
+                                          self.items[currentRow].id == selectedItem.id else { return }
+                                    self.previewImageViews[percent]?.image = image
+                                }
                             }
                         }
                     }
@@ -643,8 +728,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                 guard self.items.indices.contains(itemIndex) else { continue }
                 let item = self.items[itemIndex]
 
-                let key = self.cacheKey(id: item.id, percent: self.upNextPercent)
-                if let cached = self.thumbnailCache.object(forKey: key) {
+                if let cached = self.getOrLoadThumbnail(id: item.id, percent: self.upNextPercent) {
                     await MainActor.run {
                         guard slot < self.upNextAssignedItemIDs.count,
                               self.upNextAssignedItemIDs[slot] == item.id else { return }
@@ -653,7 +737,15 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                     continue
                 }
 
-                let url = URL(fileURLWithPath: item.fullPath(root: self.rootDir))
+                let fullPath = item.fullPath(root: self.rootDir)
+                if !FileManager.default.fileExists(atPath: fullPath) {
+                    await MainActor.run {
+                        self.markMissingFile(id: item.id)
+                    }
+                    continue
+                }
+
+                let url = URL(fileURLWithPath: fullPath)
                 let asset = AVURLAsset(url: url)
                 guard let durationSeconds = await self.loadDuration(asset: asset, url: url) else { continue }
                 if Task.isCancelled { return }
@@ -666,7 +758,8 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
                 let seconds = durationSeconds * Double(self.upNextPercent) / 100
                 if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
                     if Task.isCancelled { return }
-                    self.thumbnailCache.setObject(image, forKey: key)
+                    pendingDiskSaves.append((image: image, id: item.id, percent: self.upNextPercent))
+                    self.thumbnailCache.setObject(image, forKey: self.cacheKey(id: item.id, percent: self.upNextPercent))
                     await MainActor.run {
                         guard slot < self.upNextAssignedItemIDs.count,
                               self.upNextAssignedItemIDs[slot] == item.id else { return }
@@ -680,26 +773,44 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             if self.items.indices.contains(nextIndex) {
                 if Task.isCancelled { return }
                 let nextItem = self.items[nextIndex]
-                let url = URL(fileURLWithPath: nextItem.fullPath(root: self.rootDir))
-                let asset = AVURLAsset(url: url)
-                if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
-                    let generator = AVAssetImageGenerator(asset: asset)
-                    generator.appliesPreferredTrackTransform = true
-                    generator.requestedTimeToleranceBefore = .zero
-                    generator.requestedTimeToleranceAfter = .zero
+                let fullPath = nextItem.fullPath(root: self.rootDir)
+                if !FileManager.default.fileExists(atPath: fullPath) {
+                    await MainActor.run {
+                        self.markMissingFile(id: nextItem.id)
+                    }
+                } else {
+                    let url = URL(fileURLWithPath: fullPath)
+                    let asset = AVURLAsset(url: url)
+                    if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
+                        let generator = AVAssetImageGenerator(asset: asset)
+                        generator.appliesPreferredTrackTransform = true
+                        generator.requestedTimeToleranceBefore = .zero
+                        generator.requestedTimeToleranceAfter = .zero
 
-                    for percent in self.previewPercentages {
-                        if Task.isCancelled { return }
-                        let key = self.cacheKey(id: nextItem.id, percent: percent)
-                        if self.thumbnailCache.object(forKey: key) != nil { continue }
-
-                        let seconds = durationSeconds * Double(percent) / 100
-                        if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                        for percent in self.previewPercentages {
                             if Task.isCancelled { return }
-                            self.thumbnailCache.setObject(image, forKey: key)
+                            let key = self.cacheKey(id: nextItem.id, percent: percent)
+                            if self.thumbnailCache.object(forKey: key) != nil { continue }
+                            if let diskImage = self.loadDiskThumbnail(id: nextItem.id, percent: percent) {
+                                self.thumbnailCache.setObject(diskImage, forKey: key)
+                                continue
+                            }
+
+                            let seconds = durationSeconds * Double(percent) / 100
+                            if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
+                                if Task.isCancelled { return }
+                                pendingDiskSaves.append((image: image, id: nextItem.id, percent: percent))
+                                self.thumbnailCache.setObject(image, forKey: key)
+                            }
                         }
                     }
                 }
+            }
+
+            // Save all generated thumbnails to disk AFTER generation finishes
+            for save in pendingDiskSaves {
+                if Task.isCancelled { return }
+                self.saveDiskThumbnail(save.image, id: save.id, percent: save.percent)
             }
         }
     }
@@ -840,6 +951,11 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         handleEnd()
     }
 
+    // Options Menu Actions
+    @objc func toggleSaveThumbnailsToDisk(_ sender: Any?) {
+        saveThumbnailsToDisk.toggle()
+    }
+
     // MPV Menu Toggle Actions
     @objc func toggleMpvVolumeMax1000(_ sender: Any?) { mpvVolumeMax1000.toggle() }
     @objc func toggleMpvMute(_ sender: Any?) { mpvMute.toggle() }
@@ -881,6 +997,10 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             action == Selector(("selectFirstItem:")) ||
             action == Selector(("selectLastItem:")) {
             return isTableViewFocused()
+        }
+
+        if action == Selector(("toggleSaveThumbnailsToDisk:")) {
+            menuItem.state = saveThumbnailsToDisk ? .on : .off
         }
 
         // Validate checkmarks and state for MPV menu items
@@ -1118,6 +1238,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
             cell = NSTableCellView()
             cell.identifier = cellId
             let textField = NSTextField(labelWithString: "")
+            textField.isSelectable = true
             textField.translatesAutoresizingMaskIntoConstraints = false
             textField.lineBreakMode = .byTruncatingTail
             cell.addSubview(textField)
@@ -1129,14 +1250,10 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
             ])
         }
         cell.textField?.stringValue = text
-        // Visual cue for likes/dislikes with adequate contrast on light/dark modes:
-        // 1 like: passable (orange)
-        // 2 likes: fine (yellow)
-        // 3 likes: good (green)
-        // 4 likes: excellent (teal)
-        // 5+ likes: best (purple)
-        // dislikes (< 0): red
-        if identifier.rawValue == "likes" {
+        let isMissing = missingFileIDs.contains(item.id)
+        if isMissing {
+            cell.textField?.textColor = .systemRed
+        } else if identifier.rawValue == "likes" {
             switch item.like {
             case .some(let like) where like < 0:
                 cell.textField?.textColor = .systemRed
