@@ -297,6 +297,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         previewLabel.font = .boldSystemFont(ofSize: 12)
         previewLabel.textColor = .labelColor
         previewLabel.lineBreakMode = .byTruncatingMiddle
+        previewLabel.isSelectable = true
         previewLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView()
@@ -1214,6 +1215,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
             cell = NSTableCellView()
             cell.identifier = cellId
             let textField = NSTextField(labelWithString: "")
+            textField.isSelectable = true
             textField.translatesAutoresizingMaskIntoConstraints = false
             textField.lineBreakMode = .byTruncatingTail
             cell.addSubview(textField)
