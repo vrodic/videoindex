@@ -117,6 +117,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controlsMenuItem.submenu = controlsMenu
         mainMenu.addItem(controlsMenuItem)
 
+        // Options Menu
+        let optionsMenuItem = NSMenuItem()
+        let optionsMenu = NSMenu(title: "Options")
+        let saveThumbnailsItem = NSMenuItem(title: "Save Thumbnails to Disk", action: Selector(("toggleSaveThumbnailsToDisk:")), keyEquivalent: "")
+        optionsMenu.addItem(saveThumbnailsItem)
+        optionsMenuItem.submenu = optionsMenu
+        mainMenu.addItem(optionsMenuItem)
+
         // MPV Options Menu
         let mpvMenuItem = NSMenuItem()
         let mpvMenu = NSMenu(title: "MPV")

@@ -71,6 +71,19 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     private var sessionPlayedIDs: Set<Int> = []
     private var missingFileIDs: Set<Int> = []
 
+    private let saveThumbnailsToDiskKey = "SaveThumbnailsToDisk"
+    private var saveThumbnailsToDisk: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: saveThumbnailsToDiskKey) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: saveThumbnailsToDiskKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: saveThumbnailsToDiskKey)
+        }
+    }
+
     private var thumbsDirectoryURL: URL {
         URL(fileURLWithPath: rootDir).appendingPathComponent("Thumbs", isDirectory: true)
     }
@@ -90,6 +103,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     }
 
     private func saveDiskThumbnail(_ image: NSImage, id: Int, percent: Int) {
+        guard saveThumbnailsToDisk else { return }
         ensureThumbsDirectoryExists()
         let fileURL = diskThumbURL(id: id, percent: percent)
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
@@ -937,6 +951,11 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         handleEnd()
     }
 
+    // Options Menu Actions
+    @objc func toggleSaveThumbnailsToDisk(_ sender: Any?) {
+        saveThumbnailsToDisk.toggle()
+    }
+
     // MPV Menu Toggle Actions
     @objc func toggleMpvVolumeMax1000(_ sender: Any?) { mpvVolumeMax1000.toggle() }
     @objc func toggleMpvMute(_ sender: Any?) { mpvMute.toggle() }
@@ -978,6 +997,10 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
             action == Selector(("selectFirstItem:")) ||
             action == Selector(("selectLastItem:")) {
             return isTableViewFocused()
+        }
+
+        if action == Selector(("toggleSaveThumbnailsToDisk:")) {
+            menuItem.state = saveThumbnailsToDisk ? .on : .off
         }
 
         // Validate checkmarks and state for MPV menu items
