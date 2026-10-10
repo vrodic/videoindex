@@ -35,7 +35,7 @@ final class CustomTableRowView: NSTableRowView {
     }
 }
 
-final class PlayerViewController: NSViewController, NSMenuItemValidation {
+final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComboBoxDelegate {
 
     private let rootDir: String
     private let db: Database
@@ -44,11 +44,35 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     private var searchTerm: String = ""
     private var conditionExpression: String
 
+    private let defaultConditions: [String] = [
+        "AND like > 2 ORDER BY viewed_time, random() -- (Default: Highly liked, oldest viewed first)",
+        "ORDER BY view_count ASC, file_size DESC -- (Least viewed first)",
+        "ORDER BY view_count DESC -- (Most viewed)",
+        "ORDER BY file_size DESC -- (Largest files)",
+        "ORDER BY viewed_time DESC -- (Recently viewed)",
+        "ORDER BY id DESC -- (Recently added)",
+        "AND (like IS NULL OR like >= 0) ORDER BY random() -- (Unrated & liked, shuffled)",
+        "AND like > 0 ORDER BY like DESC -- (Liked videos)"
+    ]
+
+    private let customConditionsKey = "CustomConditions"
+    private var savedCustomConditions: [String] {
+        get {
+            UserDefaults.standard.stringArray(forKey: customConditionsKey) ?? []
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: customConditionsKey)
+        }
+    }
+
+    private var lastQuerySucceeded: Bool = false
+    private var hasAddedCurrentConditionToHistory: Bool = true
+
     private let tableView = ShortcutTableView()
     private let scrollView = NSScrollView()
     private let searchField = NSTextField()
     private let wordCloudButton = NSButton(title: "Word Cloud", target: nil, action: nil)
-    private let conditionField = NSTextField()
+    private let conditionField = NSComboBox()
     private let statusLabel = NSTextField(labelWithString: "")
 
     private var wordCloudWindowController: WordCloudWindowController?
@@ -171,9 +195,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
     init(rootDir: String, indexFile: String) {
         self.rootDir = rootDir
         self.db = Database(path: indexFile)
-        // Mirrors the Python default: dislikes/likes-only shuffled queue,
-        // most-recently-viewed last.
-        self.conditionExpression = "AND like > 2 ORDER BY viewed_time, random()"
+        self.conditionExpression = "AND like > 2 ORDER BY viewed_time, random() -- (Default: Highly liked, oldest viewed first)"
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -245,7 +267,10 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
         conditionField.placeholderString = "SQL condition / ORDER BY…"
         conditionField.delegate = self
         conditionField.allowsEditingTextAttributes = true
+        conditionField.hasVerticalScroller = true
+        conditionField.completes = true
         conditionField.translatesAutoresizingMaskIntoConstraints = false
+        populateConditionComboBox()
 
         buildPreviewPanel()
 
@@ -498,9 +523,39 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation {
 
     // MARK: - Data
 
+    private func populateConditionComboBox() {
+        conditionField.removeAllItems()
+        var allConditions = defaultConditions
+        for custom in savedCustomConditions {
+            if !allConditions.contains(custom) {
+                allConditions.append(custom)
+            }
+        }
+        conditionField.addItems(withObjectValues: allConditions)
+        conditionField.stringValue = conditionExpression
+    }
+
+    private func checkAndSaveCustomCondition() {
+        guard lastQuerySucceeded, !hasAddedCurrentConditionToHistory else { return }
+        let trimmed = conditionExpression.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        var currentItems: [String] = defaultConditions
+        currentItems.append(contentsOf: savedCustomConditions)
+        if !currentItems.contains(trimmed) {
+            var updated = savedCustomConditions
+            updated.append(trimmed)
+            savedCustomConditions = updated
+            populateConditionComboBox()
+            conditionField.stringValue = trimmed
+        }
+        hasAddedCurrentConditionToHistory = true
+    }
+
     private func reload() {
         let result = db.loadItems(search: searchTerm, conditionExpression: conditionExpression)
         items = result.items
+        lastQuerySucceeded = (result.errorMessage == nil)
         updateStatusLabel(itemCount: items.count, errorMessage: result.errorMessage)
 
         if tableView.sortDescriptors.isEmpty {
@@ -1193,6 +1248,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        checkAndSaveCustomCondition()
         refreshThumbnails()
     }
 
@@ -1291,13 +1347,26 @@ extension PlayerViewController: NSTextFieldDelegate {
         return false
     }
 
+    func comboBoxSelectionDidChange(_ notification: Notification) {
+        guard let comboBox = notification.object as? NSComboBox, comboBox === conditionField else { return }
+        let selectedIndex = comboBox.indexOfSelectedItem
+        guard selectedIndex >= 0, selectedIndex < comboBox.numberOfItems else { return }
+        if let selectedValue = comboBox.itemObjectValue(at: selectedIndex) as? String {
+            conditionExpression = selectedValue
+            conditionField.stringValue = selectedValue
+            hasAddedCurrentConditionToHistory = true
+            reload()
+        }
+    }
+
     func controlTextDidChange(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField else { return }
+        guard let field = obj.object as? NSControl else { return }
         if field === searchField {
-            searchTerm = field.stringValue
+            searchTerm = searchField.stringValue
             reload()
         } else if field === conditionField {
-            conditionExpression = field.stringValue
+            conditionExpression = conditionField.stringValue
+            hasAddedCurrentConditionToHistory = false
             reload() // a bad fragment now shows its error in statusLabel instead of just an empty table
         }
     }
