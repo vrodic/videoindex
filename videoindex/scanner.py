@@ -8,7 +8,7 @@ import hashlib
 
 skip_ext = [
     '.jpg', '.gif', '.jpeg', '.nfo', '.png', '.srt', '.zip', '.rar', '.vtx', '.parts', '.mp3', '.txt', '.wma',
-    '.ogg', '.mp2', '.ini'
+    '.ogg', '.mp2', '.ini', '.webp'
 ]
 
 
