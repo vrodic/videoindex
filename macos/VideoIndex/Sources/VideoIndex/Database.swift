@@ -19,6 +19,7 @@ final class Database {
             let message = String(cString: sqlite3_errmsg(db))
             fatalError("Unable to open database at \(path): \(message)")
         }
+        createActorTablesIfNeeded()
     }
 
     deinit {
@@ -272,6 +273,156 @@ final class Database {
             ))
         }
         return records
+    }
+
+    // MARK: - Actor Functionality
+
+    struct Actor {
+        let id: Int
+        let name: String
+        var altNames: String
+    }
+
+    private func createActorTablesIfNeeded() {
+        let createActorsSQL = """
+        CREATE TABLE IF NOT EXISTS actors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            alt_names TEXT
+        );
+        """
+        let createMediaActorsSQL = """
+        CREATE TABLE IF NOT EXISTS media_actors (
+            media_id INTEGER,
+            actor_id INTEGER,
+            PRIMARY KEY (media_id, actor_id)
+        );
+        """
+        sqlite3_exec(db, createActorsSQL, nil, nil, nil)
+        sqlite3_exec(db, createMediaActorsSQL, nil, nil, nil)
+    }
+
+    func fetchAllActors() -> [Actor] {
+        let sql = "SELECT id, name, alt_names FROM actors ORDER BY name ASC"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(statement) }
+
+        var actors: [Actor] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let id = Int(sqlite3_column_int(statement, 0))
+            let name = columnText(statement, 1) ?? ""
+            let altNames = columnText(statement, 2) ?? ""
+            actors.append(Actor(id: id, name: name, altNames: altNames))
+        }
+        return actors
+    }
+
+    func fetchActorsForMedia(mediaID: Int) -> [Actor] {
+        let sql = """
+        SELECT a.id, a.name, a.alt_names
+        FROM actors a
+        JOIN media_actors ma ON a.id = ma.actor_id
+        WHERE ma.media_id = ?
+        ORDER BY a.name ASC
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int(statement, 1, Int32(mediaID))
+
+        var actors: [Actor] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let id = Int(sqlite3_column_int(statement, 0))
+            let name = columnText(statement, 1) ?? ""
+            let altNames = columnText(statement, 2) ?? ""
+            actors.append(Actor(id: id, name: name, altNames: altNames))
+        }
+        return actors
+    }
+
+    @discardableResult
+    func addOrGetActor(name: String) -> Actor? {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return nil }
+
+        // Check if exists
+        let selectSQL = "SELECT id, name, alt_names FROM actors WHERE lower(name) = lower(?)"
+        var selectStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, selectSQL, -1, &selectStmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(selectStmt, 1, trimmedName, -1, SQLITE_TRANSIENT)
+            if sqlite3_step(selectStmt) == SQLITE_ROW {
+                let id = Int(sqlite3_column_int(selectStmt, 0))
+                let actorName = columnText(selectStmt, 1) ?? trimmedName
+                let altNames = columnText(selectStmt, 2) ?? ""
+                sqlite3_finalize(selectStmt)
+                return Actor(id: id, name: actorName, altNames: altNames)
+            }
+            sqlite3_finalize(selectStmt)
+        }
+
+        // Insert new actor
+        let insertSQL = "INSERT INTO actors (name, alt_names) VALUES (?, '')"
+        var insertStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(insertStmt, 1, trimmedName, -1, SQLITE_TRANSIENT)
+
+        if sqlite3_step(insertStmt) == SQLITE_DONE {
+            let newID = Int(sqlite3_last_insert_rowid(db))
+            sqlite3_finalize(insertStmt)
+            return Actor(id: newID, name: trimmedName, altNames: "")
+        }
+        sqlite3_finalize(insertStmt)
+        return nil
+    }
+
+    func addActorToMedia(actorName: String, mediaID: Int) {
+        guard let actor = addOrGetActor(name: actorName) else { return }
+        let linkSQL = "INSERT OR IGNORE INTO media_actors (media_id, actor_id) VALUES (?, ?)"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, linkSQL, -1, &statement, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int(statement, 1, Int32(mediaID))
+        sqlite3_bind_int(statement, 2, Int32(actor.id))
+        sqlite3_step(statement)
+    }
+
+    func removeActorFromMedia(actorID: Int, mediaID: Int) {
+        let sql = "DELETE FROM media_actors WHERE media_id = ? AND actor_id = ?"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int(statement, 1, Int32(mediaID))
+        sqlite3_bind_int(statement, 2, Int32(actorID))
+        sqlite3_step(statement)
+    }
+
+    func assignActorToMediaIDs(actorID: Int, mediaIDs: [Int]) {
+        let sql = "INSERT OR IGNORE INTO media_actors (media_id, actor_id) VALUES (?, ?)"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(statement) }
+
+        for mediaID in mediaIDs {
+            sqlite3_reset(statement)
+            sqlite3_bind_int(statement, 1, Int32(mediaID))
+            sqlite3_bind_int(statement, 2, Int32(actorID))
+            sqlite3_step(statement)
+        }
+    }
+
+    func updateActorAltNames(actorID: Int, altNames: String) {
+        let sql = "UPDATE actors SET alt_names = ? WHERE id = ?"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, altNames, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(statement, 2, Int32(actorID))
+        sqlite3_step(statement)
     }
 
     /// SQLite auto-commits each statement by default, so this is a no-op —
