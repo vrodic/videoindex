@@ -210,6 +210,70 @@ final class Database {
             }
     }
 
+    /// Dashboard record holding fields needed for statistics & visualization.
+    struct DashboardRecord {
+        let id: Int
+        let filename: String
+        let fileSize: Int64
+        let like: Int?
+        let width: Int?
+        let duration: Double?
+        let viewCount: Int?
+    }
+
+    /// Fetches records for dashboard metrics.
+    /// If `filterByCondition` is true, applies the `search` and `conditionExpression` filters.
+    func fetchDashboardRecords(search: String = "", conditionExpression: String = "", filterByCondition: Bool = false) -> [DashboardRecord] {
+        let sql: String
+        if filterByCondition {
+            sql = """
+            SELECT id, filename, file_size, like, width, duration, view_count
+            FROM media
+            WHERE filename LIKE ? \(extraConditions) \(conditionExpression)
+            """
+        } else {
+            sql = """
+            SELECT id, filename, file_size, like, width, duration, view_count
+            FROM media
+            WHERE 1=1 \(extraConditions)
+            """
+        }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            let message = String(cString: sqlite3_errmsg(db))
+            print("Dashboard query failed: \(message)\nSQL: \(sql)")
+            return []
+        }
+        defer { sqlite3_finalize(statement) }
+
+        if filterByCondition {
+            sqlite3_bind_text(statement, 1, "%\(search)%", -1, SQLITE_TRANSIENT)
+        }
+
+        var records: [DashboardRecord] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let id = Int(sqlite3_column_int(statement, 0))
+            let filename = columnText(statement, 1) ?? ""
+            let fileSize = sqlite3_column_int64(statement, 2)
+            let like = columnInt(statement, 3)
+            let width = columnInt(statement, 4)
+            let duration = columnDouble(statement, 5)
+            let viewCount = columnInt(statement, 6)
+
+            records.append(DashboardRecord(
+                id: id,
+                filename: filename,
+                fileSize: fileSize,
+                like: like,
+                width: width,
+                duration: duration,
+                viewCount: viewCount
+            ))
+        }
+        return records
+    }
+
     /// SQLite auto-commits each statement by default, so this is a no-op —
     /// kept only for parity with the Python code's explicit connection.commit().
     func commit() {}
@@ -225,5 +289,10 @@ final class Database {
     private func columnInt(_ statement: OpaquePointer?, _ index: Int32) -> Int? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return Int(sqlite3_column_int(statement, index))
+    }
+
+    private func columnDouble(_ statement: OpaquePointer?, _ index: Int32) -> Double? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return sqlite3_column_double(statement, index)
     }
 }
