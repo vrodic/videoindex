@@ -1721,7 +1721,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
         tableView.reloadData()
     }
 
-    func tableView(_ tableView: NSTableView, didClickTableColumn tableColumn: NSTableColumn) {
+    func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
         if tableColumn.identifier.rawValue == "select" {
             toggleSelectAllRows()
         }
