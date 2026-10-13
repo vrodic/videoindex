@@ -197,7 +197,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     private var upNextAssignedItemIDs: [Int?] = []
 
     private let columnDefinitions: [(id: String, title: String, width: CGFloat)] = [
-        ("select", "✓", 30),
+        ("select", "✓", 40),
         ("id", "ID", 60),
         ("filename", "Filename", 520),
         ("views", "Views", 60),
@@ -368,12 +368,30 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         // Configure actors table
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorName"))
         nameCol.title = "Name"
-        nameCol.width = 160
+        nameCol.width = 140
+
         let altCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorAltNames"))
         altCol.title = "Alternate Names (Editable)"
-        altCol.width = 240
+        altCol.width = 180
+
+        let assignCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorAssign"))
+        assignCol.title = "Assign"
+        assignCol.width = 46
+
+        let conditionCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorCondition"))
+        conditionCol.title = "Filter"
+        conditionCol.width = 46
+
+        let searchCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorSearch"))
+        searchCol.title = "Search"
+        searchCol.width = 46
+
         actorsTableView.addTableColumn(nameCol)
         actorsTableView.addTableColumn(altCol)
+        actorsTableView.addTableColumn(assignCol)
+        actorsTableView.addTableColumn(conditionCol)
+        actorsTableView.addTableColumn(searchCol)
+
         actorsTableView.usesAlternatingRowBackgroundColors = true
         actorsTableView.allowsMultipleSelection = false
         actorsTableView.delegate = self
@@ -383,10 +401,12 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         actorsScrollView.hasVerticalScroller = true
         actorsScrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        actorInputField.placeholderString = "Enter actor name…"
+        actorInputField.placeholderString = "Enter actor name… (Press Enter to add)"
         actorInputField.hasVerticalScroller = true
         actorInputField.completes = true
         actorInputField.delegate = self
+        actorInputField.target = self
+        actorInputField.action = #selector(addActorClicked(_:))
         actorInputField.translatesAutoresizingMaskIntoConstraints = false
 
         addActorButton.bezelStyle = .rounded
@@ -399,35 +419,14 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         removeActorButton.action = #selector(removeActorClicked(_:))
         removeActorButton.translatesAutoresizingMaskIntoConstraints = false
 
-        assignActorToCheckedButton.bezelStyle = .rounded
-        assignActorToCheckedButton.target = self
-        assignActorToCheckedButton.action = #selector(assignActorToCheckedClicked(_:))
-        assignActorToCheckedButton.translatesAutoresizingMaskIntoConstraints = false
-
-        addActorConditionButton.bezelStyle = .rounded
-        addActorConditionButton.target = self
-        addActorConditionButton.action = #selector(addActorConditionClicked(_:))
-        addActorConditionButton.translatesAutoresizingMaskIntoConstraints = false
-
-        searchActorFilenameButton.bezelStyle = .rounded
-        searchActorFilenameButton.target = self
-        searchActorFilenameButton.action = #selector(searchActorFilenameClicked(_:))
-        searchActorFilenameButton.translatesAutoresizingMaskIntoConstraints = false
-
         let topRowStack = NSStackView(views: [actorInputField, addActorButton, removeActorButton])
         topRowStack.orientation = .horizontal
         topRowStack.spacing = 6
         topRowStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let bottomRowStack = NSStackView(views: [assignActorToCheckedButton, addActorConditionButton, searchActorFilenameButton])
-        bottomRowStack.orientation = .horizontal
-        bottomRowStack.spacing = 6
-        bottomRowStack.translatesAutoresizingMaskIntoConstraints = false
-
         actorsContainerView.addSubview(headerLabel)
         actorsContainerView.addSubview(actorsScrollView)
         actorsContainerView.addSubview(topRowStack)
-        actorsContainerView.addSubview(bottomRowStack)
 
         NSLayoutConstraint.activate([
             headerLabel.topAnchor.constraint(equalTo: actorsContainerView.topAnchor),
@@ -440,10 +439,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             topRowStack.topAnchor.constraint(equalTo: actorsScrollView.bottomAnchor, constant: 6),
             topRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             topRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
-
-            bottomRowStack.topAnchor.constraint(equalTo: topRowStack.bottomAnchor, constant: 4),
-            bottomRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
-            bottomRowStack.bottomAnchor.constraint(equalTo: actorsContainerView.bottomAnchor),
+            topRowStack.bottomAnchor.constraint(equalTo: actorsContainerView.bottomAnchor),
 
             actorInputField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
         ])
@@ -487,51 +483,37 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         refreshCurrentMediaActors()
     }
 
-    @objc private func assignActorToCheckedClicked(_ sender: Any?) {
-        let selectedActorRow = actorsTableView.selectedRow
-        let actorToAssign: Database.Actor?
-        if selectedActorRow >= 0, currentMediaActors.indices.contains(selectedActorRow) {
-            actorToAssign = currentMediaActors[selectedActorRow]
-        } else {
-            let typedName = actorInputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !typedName.isEmpty {
-                actorToAssign = db.addOrGetActor(name: typedName)
-                refreshAllActorsList()
-            } else {
-                actorToAssign = nil
-            }
-        }
-
-        guard let actor = actorToAssign else { return }
+    @objc private func assignActorRowClicked(_ sender: NSButton) {
+        let row = sender.tag
+        guard currentMediaActors.indices.contains(row) else { return }
+        let actor = currentMediaActors[row]
         guard !checkedItemIDs.isEmpty else { return }
         db.assignActorToMediaIDs(actorID: actor.id, mediaIDs: Array(checkedItemIDs))
         refreshCurrentMediaActors()
     }
 
-    @objc private func addActorConditionClicked(_ sender: Any?) {
-        let selectedActorRow = actorsTableView.selectedRow
-        guard selectedActorRow >= 0, currentMediaActors.indices.contains(selectedActorRow) else { return }
-        let actor = currentMediaActors[selectedActorRow]
+    @objc private func addActorConditionRowClicked(_ sender: NSButton) {
+        let row = sender.tag
+        guard currentMediaActors.indices.contains(row) else { return }
+        let actor = currentMediaActors[row]
         let newCondition = "AND id IN (SELECT media_id FROM media_actors WHERE actor_id = \(actor.id))"
         conditionExpression = newCondition
         conditionField.stringValue = newCondition
         reload()
     }
 
-    @objc private func searchActorFilenameClicked(_ sender: Any?) {
-        let selectedActorRow = actorsTableView.selectedRow
-        guard selectedActorRow >= 0, currentMediaActors.indices.contains(selectedActorRow) else { return }
-        let actor = currentMediaActors[selectedActorRow]
+    @objc private func searchActorFilenameRowClicked(_ sender: NSButton) {
+        let row = sender.tag
+        guard currentMediaActors.indices.contains(row) else { return }
+        let actor = currentMediaActors[row]
 
         var nameVariants: Set<String> = []
 
         func addVariants(for rawName: String) {
             let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
-            // Underscore version
             let withUnderscores = trimmed.replacingOccurrences(of: " ", with: "_")
             nameVariants.insert(withUnderscores)
-            // No spaces version
             let noSpaces = trimmed.replacingOccurrences(of: " ", with: "")
             nameVariants.insert(noSpaces)
         }
@@ -1528,38 +1510,83 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
         if tableView === actorsTableView {
             guard let identifier = tableColumn?.identifier, currentMediaActors.indices.contains(row) else { return nil }
             let actor = currentMediaActors[row]
-            let cellId = NSUserInterfaceItemIdentifier("actorCell-\(identifier.rawValue)")
-            let cell: NSTableCellView
-            if let reused = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView {
-                cell = reused
-            } else {
-                cell = NSTableCellView()
-                cell.identifier = cellId
-                let textField = NSTextField(labelWithString: "")
-                textField.translatesAutoresizingMaskIntoConstraints = false
-                textField.lineBreakMode = .byTruncatingTail
-                cell.addSubview(textField)
-                cell.textField = textField
-                NSLayoutConstraint.activate([
-                    textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-                    textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-                    textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                ])
-            }
 
-            if identifier.rawValue == "actorName" {
-                cell.textField?.stringValue = actor.name
-                cell.textField?.isEditable = false
-                cell.textField?.isSelectable = true
-            } else if identifier.rawValue == "actorAltNames" {
-                cell.textField?.stringValue = actor.altNames
-                cell.textField?.isEditable = true
-                cell.textField?.isSelectable = true
-                cell.textField?.target = self
-                cell.textField?.action = #selector(actorAltNamesEdited(_:))
-                cell.textField?.tag = row
+            if identifier.rawValue == "actorName" || identifier.rawValue == "actorAltNames" {
+                let cellId = NSUserInterfaceItemIdentifier("actorCell-\(identifier.rawValue)")
+                let cell: NSTableCellView
+                if let reused = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView {
+                    cell = reused
+                } else {
+                    cell = NSTableCellView()
+                    cell.identifier = cellId
+                    let textField = NSTextField(labelWithString: "")
+                    textField.translatesAutoresizingMaskIntoConstraints = false
+                    textField.lineBreakMode = .byTruncatingTail
+                    cell.addSubview(textField)
+                    cell.textField = textField
+                    NSLayoutConstraint.activate([
+                        textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                        textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                        textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    ])
+                }
+
+                if identifier.rawValue == "actorName" {
+                    cell.textField?.stringValue = actor.name
+                    cell.textField?.isEditable = false
+                    cell.textField?.isSelectable = true
+                } else {
+                    cell.textField?.stringValue = actor.altNames
+                    cell.textField?.isEditable = true
+                    cell.textField?.isSelectable = true
+                    cell.textField?.target = self
+                    cell.textField?.action = #selector(actorAltNamesEdited(_:))
+                    cell.textField?.tag = row
+                }
+                return cell
+            } else {
+                let cellId = NSUserInterfaceItemIdentifier("actorBtnCell-\(identifier.rawValue)")
+                let cell: NSTableCellView
+                let button: NSButton
+                if let reused = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView,
+                   let btn = reused.subviews.first as? NSButton {
+                    cell = reused
+                    button = btn
+                } else {
+                    cell = NSTableCellView()
+                    cell.identifier = cellId
+                    button = NSButton()
+                    button.bezelStyle = .inline
+                    button.isBordered = false
+                    button.translatesAutoresizingMaskIntoConstraints = false
+                    cell.addSubview(button)
+                    NSLayoutConstraint.activate([
+                        button.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
+                        button.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                        button.widthAnchor.constraint(equalToConstant: 24),
+                        button.heightAnchor.constraint(equalToConstant: 24),
+                    ])
+                }
+
+                button.tag = row
+                if identifier.rawValue == "actorAssign" {
+                    button.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "Assign to Checked") ?? NSImage(named: NSImage.touchBarCheckmarkTemplateName)
+                    button.toolTip = "Assign to Checked Media"
+                    button.target = self
+                    button.action = #selector(assignActorRowClicked(_:))
+                } else if identifier.rawValue == "actorCondition" {
+                    button.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: "Filter Media") ?? NSImage(named: NSImage.touchBarFilterTemplateName)
+                    button.toolTip = "Filter media by actor"
+                    button.target = self
+                    button.action = #selector(addActorConditionRowClicked(_:))
+                } else if identifier.rawValue == "actorSearch" {
+                    button.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search Filename") ?? NSImage(named: NSImage.touchBarSearchTemplateName)
+                    button.toolTip = "Search filename for actor name"
+                    button.target = self
+                    button.action = #selector(searchActorFilenameRowClicked(_:))
+                }
+                return cell
             }
-            return cell
         }
 
         guard let identifier = tableColumn?.identifier, items.indices.contains(row) else { return nil }
@@ -1577,6 +1604,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
                 cell = NSTableCellView()
                 cell.identifier = cellId
                 checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(mediaRowCheckboxToggled(_:)))
+                checkbox.setButtonType(.switch)
                 checkbox.translatesAutoresizingMaskIntoConstraints = false
                 cell.addSubview(checkbox)
                 NSLayoutConstraint.activate([
