@@ -279,8 +279,9 @@ final class Database {
 
     struct Actor {
         let id: Int
-        let name: String
+        var name: String
         var altNames: String
+        let mediaCount: Int
     }
 
     private func createActorTablesIfNeeded() {
@@ -303,7 +304,13 @@ final class Database {
     }
 
     func fetchAllActors() -> [Actor] {
-        let sql = "SELECT id, name, alt_names FROM actors ORDER BY name ASC"
+        let sql = """
+        SELECT a.id, a.name, a.alt_names, COUNT(ma.media_id) as count
+        FROM actors a
+        LEFT JOIN media_actors ma ON a.id = ma.actor_id
+        GROUP BY a.id, a.name, a.alt_names
+        ORDER BY a.name ASC
+        """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(statement) }
@@ -313,14 +320,16 @@ final class Database {
             let id = Int(sqlite3_column_int(statement, 0))
             let name = columnText(statement, 1) ?? ""
             let altNames = columnText(statement, 2) ?? ""
-            actors.append(Actor(id: id, name: name, altNames: altNames))
+            let mediaCount = Int(sqlite3_column_int(statement, 3))
+            actors.append(Actor(id: id, name: name, altNames: altNames, mediaCount: mediaCount))
         }
         return actors
     }
 
     func fetchActorsForMedia(mediaID: Int) -> [Actor] {
         let sql = """
-        SELECT a.id, a.name, a.alt_names
+        SELECT a.id, a.name, a.alt_names,
+               (SELECT COUNT(*) FROM media_actors WHERE actor_id = a.id) as count
         FROM actors a
         JOIN media_actors ma ON a.id = ma.actor_id
         WHERE ma.media_id = ?
@@ -337,7 +346,8 @@ final class Database {
             let id = Int(sqlite3_column_int(statement, 0))
             let name = columnText(statement, 1) ?? ""
             let altNames = columnText(statement, 2) ?? ""
-            actors.append(Actor(id: id, name: name, altNames: altNames))
+            let mediaCount = Int(sqlite3_column_int(statement, 3))
+            actors.append(Actor(id: id, name: name, altNames: altNames, mediaCount: mediaCount))
         }
         return actors
     }
@@ -348,7 +358,11 @@ final class Database {
         guard !trimmedName.isEmpty else { return nil }
 
         // Check if exists
-        let selectSQL = "SELECT id, name, alt_names FROM actors WHERE lower(name) = lower(?)"
+        let selectSQL = """
+        SELECT a.id, a.name, a.alt_names,
+               (SELECT COUNT(*) FROM media_actors WHERE actor_id = a.id) as count
+        FROM actors a WHERE lower(a.name) = lower(?)
+        """
         var selectStmt: OpaquePointer?
         if sqlite3_prepare_v2(db, selectSQL, -1, &selectStmt, nil) == SQLITE_OK {
             sqlite3_bind_text(selectStmt, 1, trimmedName, -1, SQLITE_TRANSIENT)
@@ -356,8 +370,9 @@ final class Database {
                 let id = Int(sqlite3_column_int(selectStmt, 0))
                 let actorName = columnText(selectStmt, 1) ?? trimmedName
                 let altNames = columnText(selectStmt, 2) ?? ""
+                let mediaCount = Int(sqlite3_column_int(selectStmt, 3))
                 sqlite3_finalize(selectStmt)
-                return Actor(id: id, name: actorName, altNames: altNames)
+                return Actor(id: id, name: actorName, altNames: altNames, mediaCount: mediaCount)
             }
             sqlite3_finalize(selectStmt)
         }
@@ -371,7 +386,7 @@ final class Database {
         if sqlite3_step(insertStmt) == SQLITE_DONE {
             let newID = Int(sqlite3_last_insert_rowid(db))
             sqlite3_finalize(insertStmt)
-            return Actor(id: newID, name: trimmedName, altNames: "")
+            return Actor(id: newID, name: trimmedName, altNames: "", mediaCount: 0)
         }
         sqlite3_finalize(insertStmt)
         return nil
@@ -412,6 +427,19 @@ final class Database {
             sqlite3_bind_int(statement, 2, Int32(actorID))
             sqlite3_step(statement)
         }
+    }
+
+    func updateActorName(actorID: Int, newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let sql = "UPDATE actors SET name = ? WHERE id = ?"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, trimmed, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(statement, 2, Int32(actorID))
+        sqlite3_step(statement)
     }
 
     func updateActorAltNames(actorID: Int, altNames: String) {

@@ -367,12 +367,16 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
         // Configure actors table
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorName"))
-        nameCol.title = "Name"
-        nameCol.width = 140
+        nameCol.title = "Name (Editable)"
+        nameCol.width = 130
 
         let altCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorAltNames"))
         altCol.title = "Alternate Names (Editable)"
-        altCol.width = 180
+        altCol.width = 170
+
+        let countCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorCount"))
+        countCol.title = "Media Count"
+        countCol.width = 80
 
         let assignCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorAssign"))
         assignCol.title = "Assign"
@@ -388,6 +392,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
         actorsTableView.addTableColumn(nameCol)
         actorsTableView.addTableColumn(altCol)
+        actorsTableView.addTableColumn(countCol)
         actorsTableView.addTableColumn(assignCol)
         actorsTableView.addTableColumn(conditionCol)
         actorsTableView.addTableColumn(searchCol)
@@ -532,6 +537,17 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         conditionExpression = conditionSQL
         conditionField.stringValue = conditionSQL
         reload()
+    }
+
+    @objc private func actorNameEdited(_ sender: NSTextField) {
+        let row = sender.tag
+        guard currentMediaActors.indices.contains(row) else { return }
+        let newName = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty else { return }
+        let actor = currentMediaActors[row]
+        db.updateActorName(actorID: actor.id, newName: newName)
+        currentMediaActors[row].name = newName
+        refreshAllActorsList()
     }
 
     @objc private func actorAltNamesEdited(_ sender: NSTextField) {
@@ -769,6 +785,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     }
 
     private func reload() {
+        checkedItemIDs.removeAll()
         let result = db.loadItems(search: searchTerm, conditionExpression: conditionExpression)
         items = result.items
         lastQuerySucceeded = (result.errorMessage == nil)
@@ -1511,7 +1528,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
             guard let identifier = tableColumn?.identifier, currentMediaActors.indices.contains(row) else { return nil }
             let actor = currentMediaActors[row]
 
-            if identifier.rawValue == "actorName" || identifier.rawValue == "actorAltNames" {
+            if identifier.rawValue == "actorName" || identifier.rawValue == "actorAltNames" || identifier.rawValue == "actorCount" {
                 let cellId = NSUserInterfaceItemIdentifier("actorCell-\(identifier.rawValue)")
                 let cell: NSTableCellView
                 if let reused = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView {
@@ -1533,15 +1550,22 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
 
                 if identifier.rawValue == "actorName" {
                     cell.textField?.stringValue = actor.name
-                    cell.textField?.isEditable = false
+                    cell.textField?.isEditable = true
                     cell.textField?.isSelectable = true
-                } else {
+                    cell.textField?.target = self
+                    cell.textField?.action = #selector(actorNameEdited(_:))
+                    cell.textField?.tag = row
+                } else if identifier.rawValue == "actorAltNames" {
                     cell.textField?.stringValue = actor.altNames
                     cell.textField?.isEditable = true
                     cell.textField?.isSelectable = true
                     cell.textField?.target = self
                     cell.textField?.action = #selector(actorAltNamesEdited(_:))
                     cell.textField?.tag = row
+                } else if identifier.rawValue == "actorCount" {
+                    cell.textField?.stringValue = String(actor.mediaCount)
+                    cell.textField?.isEditable = false
+                    cell.textField?.isSelectable = true
                 }
                 return cell
             } else {
@@ -1697,7 +1721,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
         tableView.reloadData()
     }
 
-    func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
+    func tableView(_ tableView: NSTableView, didClickTableColumn tableColumn: NSTableColumn) {
         if tableColumn.identifier.rawValue == "select" {
             toggleSelectAllRows()
         }
