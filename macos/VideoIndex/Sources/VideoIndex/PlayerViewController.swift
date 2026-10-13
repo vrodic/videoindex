@@ -76,6 +76,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     private let statusLabel = NSTextField(labelWithString: "")
 
     private var wordCloudWindowController: WordCloudWindowController?
+    private var dashboardWindowController: DashboardWindowController?
 
     private let splitViewAutosaveName = "VideoIndexMainSplit"
     private let splitView = NSSplitView()
@@ -956,6 +957,14 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     }
 
     // MARK: - Actions & Responder Chain Menu Handlers
+
+    @objc func openDashboard(_ sender: Any?) {
+        let controller = DashboardWindowController(db: db, search: searchTerm, condition: conditionExpression)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        self.dashboardWindowController = controller
+    }
 
     @objc func openWordCloud(_ sender: Any?) {
         let wordFrequencies = db.fetchWordFrequencies()

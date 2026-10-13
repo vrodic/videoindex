@@ -96,6 +96,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
+        // View Menu
+        let viewMenuItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        let dashboardItem = NSMenuItem(title: "Dashboard...", action: Selector(("openDashboard:")), keyEquivalent: "d")
+        viewMenu.addItem(dashboardItem)
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
+
         // Controls Menu
         let controlsMenuItem = NSMenuItem()
         let controlsMenu = NSMenu(title: "Controls")
