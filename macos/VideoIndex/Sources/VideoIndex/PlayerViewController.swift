@@ -1570,17 +1570,17 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
 
                 button.tag = row
                 if identifier.rawValue == "actorAssign" {
-                    button.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "Assign to Checked") ?? NSImage(named: NSImage.touchBarCheckmarkTemplateName)
+                    button.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "Assign to Checked") ?? NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
                     button.toolTip = "Assign to Checked Media"
                     button.target = self
                     button.action = #selector(assignActorRowClicked(_:))
                 } else if identifier.rawValue == "actorCondition" {
-                    button.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: "Filter Media") ?? NSImage(named: NSImage.touchBarFilterTemplateName)
+                    button.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: "Filter Media") ?? NSImage(systemSymbolName: "line.horizontal.3.decrease", accessibilityDescription: nil)
                     button.toolTip = "Filter media by actor"
                     button.target = self
                     button.action = #selector(addActorConditionRowClicked(_:))
                 } else if identifier.rawValue == "actorSearch" {
-                    button.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search Filename") ?? NSImage(named: NSImage.touchBarSearchTemplateName)
+                    button.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search Filename")
                     button.toolTip = "Search filename for actor name"
                     button.target = self
                     button.action = #selector(searchActorFilenameRowClicked(_:))
