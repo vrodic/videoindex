@@ -2025,7 +2025,7 @@ extension PlayerViewController: NSTextFieldDelegate {
     func comboBox(_ comboBox: NSComboBox, completedString substring: String) -> String? {
         guard comboBox === actorSearchComboBox || comboBox === actorInputField else { return nil }
         let actorNames = allExistingActors.map { $0.name }
-        if let match = actorNames.first(where: { $0.localizedCaseInsensitiveStarts(with: substring) }) {
+        if let match = actorNames.first(where: { $0.lowercased().hasPrefix(substring.lowercased()) }) {
             return match
         }
         return nil
