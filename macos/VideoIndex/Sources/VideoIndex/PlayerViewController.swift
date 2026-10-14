@@ -342,7 +342,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             actorsContainerView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor, constant: 8),
             actorsContainerView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor, constant: -8),
             actorsContainerView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor, constant: -8),
-            actorsContainerView.heightAnchor.constraint(equalToConstant: 220),
+            actorsContainerView.heightAnchor.constraint(equalToConstant: 235),
         ])
 
         splitView.isVertical = true
@@ -463,11 +463,13 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
         let filterRowStack = NSStackView(views: [actorSearchComboBox, filterMediaByActorsButton, selectActorsPopoverButton])
         filterRowStack.orientation = .horizontal
+        filterRowStack.alignment = .centerY
         filterRowStack.spacing = 6
         filterRowStack.translatesAutoresizingMaskIntoConstraints = false
 
         let addRowStack = NSStackView(views: [actorInputField, addActorButton, removeActorButton])
         addRowStack.orientation = .horizontal
+        addRowStack.alignment = .centerY
         addRowStack.spacing = 6
         addRowStack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -482,12 +484,12 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             filterRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             filterRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
 
-            selectedActorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 6),
+            selectedActorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 16),
             selectedActorsScrollView.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             selectedActorsScrollView.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
-            selectedActorsScrollView.heightAnchor.constraint(equalToConstant: 26),
+            selectedActorsScrollView.heightAnchor.constraint(equalToConstant: 28),
 
-            headerLabel.topAnchor.constraint(equalTo: selectedActorsScrollView.bottomAnchor, constant: 6),
+            headerLabel.topAnchor.constraint(equalTo: selectedActorsScrollView.bottomAnchor, constant: 8),
             headerLabel.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
 
             actorsScrollView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 4),
@@ -559,7 +561,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
                 closeBtn.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 4),
                 closeBtn.trailingAnchor.constraint(equalTo: pillView.trailingAnchor, constant: -6),
                 closeBtn.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
-                pillView.heightAnchor.constraint(equalToConstant: 20)
+                pillView.heightAnchor.constraint(equalToConstant: 22)
             ])
 
             selectedActorsStackView.addArrangedSubview(pillView)
@@ -586,7 +588,14 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     }
 
     private func applySelectedSearchActorsFilter() {
-        guard !selectedSearchActors.isEmpty else { return }
+        if selectedSearchActors.isEmpty {
+            if conditionExpression.contains("FROM media_actors") {
+                conditionExpression = ""
+                conditionField.stringValue = ""
+                reload()
+            }
+            return
+        }
 
         let matchedActorIDs = selectedSearchActors.map { $0.id }
         let idList = matchedActorIDs.map(String.init).joined(separator: ", ")
