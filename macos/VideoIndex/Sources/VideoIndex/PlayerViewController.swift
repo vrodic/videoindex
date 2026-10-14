@@ -511,8 +511,19 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
         guard !actorNames.isEmpty else { return }
 
-        let escapedNames = actorNames.map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }.joined(separator: ", ")
-        let sql = "AND id IN (SELECT ma.media_id FROM media_actors ma JOIN actors a ON ma.actor_id = a.id WHERE lower(a.name) IN (\(escapedNames.lowercased())) GROUP BY ma.media_id HAVING COUNT(DISTINCT ma.actor_id) = \(actorNames.count))"
+        var matchedActorIDs: [Int] = []
+        for name in actorNames {
+            if let found = allExistingActors.first(where: { $0.name.lowercased() == name.lowercased() }) {
+                matchedActorIDs.append(found.id)
+            } else if let actor = db.addOrGetActor(name: name) {
+                matchedActorIDs.append(actor.id)
+            }
+        }
+
+        guard !matchedActorIDs.isEmpty else { return }
+
+        let idList = matchedActorIDs.map(String.init).joined(separator: ", ")
+        let sql = "AND id IN (SELECT media_id FROM media_actors WHERE actor_id IN (\(idList)) GROUP BY media_id HAVING COUNT(DISTINCT actor_id) = \(matchedActorIDs.count))"
 
         conditionExpression = sql
         conditionField.stringValue = sql
