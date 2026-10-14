@@ -342,7 +342,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             actorsContainerView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor, constant: 8),
             actorsContainerView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor, constant: -8),
             actorsContainerView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor, constant: -8),
-            actorsContainerView.heightAnchor.constraint(equalToConstant: 190),
+            actorsContainerView.heightAnchor.constraint(equalToConstant: 220),
         ])
 
         splitView.isVertical = true
@@ -471,26 +471,26 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         addRowStack.spacing = 6
         addRowStack.translatesAutoresizingMaskIntoConstraints = false
 
-        actorsContainerView.addSubview(headerLabel)
         actorsContainerView.addSubview(filterRowStack)
         actorsContainerView.addSubview(selectedActorsScrollView)
+        actorsContainerView.addSubview(headerLabel)
         actorsContainerView.addSubview(actorsScrollView)
         actorsContainerView.addSubview(addRowStack)
 
         NSLayoutConstraint.activate([
-            headerLabel.topAnchor.constraint(equalTo: actorsContainerView.topAnchor),
-            headerLabel.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
-
-            filterRowStack.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 4),
+            filterRowStack.topAnchor.constraint(equalTo: actorsContainerView.topAnchor),
             filterRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             filterRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
 
-            selectedActorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 2),
+            selectedActorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 6),
             selectedActorsScrollView.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             selectedActorsScrollView.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
             selectedActorsScrollView.heightAnchor.constraint(equalToConstant: 26),
 
-            actorsScrollView.topAnchor.constraint(equalTo: selectedActorsScrollView.bottomAnchor, constant: 4),
+            headerLabel.topAnchor.constraint(equalTo: selectedActorsScrollView.bottomAnchor, constant: 6),
+            headerLabel.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
+
+            actorsScrollView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 4),
             actorsScrollView.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             actorsScrollView.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
 
