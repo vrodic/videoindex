@@ -1,6 +1,11 @@
 import Cocoa
 import AVFoundation
 
+/// Flipped view container used for documentViews in scroll views
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 /// Custom table row view that draws a subtle background highlight for played / viewed videos
 final class CustomTableRowView: NSTableRowView {
     var isViewed: Bool = false {
@@ -342,7 +347,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             actorsContainerView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor, constant: 8),
             actorsContainerView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor, constant: -8),
             actorsContainerView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor, constant: -8),
-            actorsContainerView.heightAnchor.constraint(equalToConstant: 235),
+            actorsContainerView.heightAnchor.constraint(equalToConstant: 240),
         ])
 
         splitView.isVertical = true
@@ -452,14 +457,28 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         selectActorsPopoverButton.translatesAutoresizingMaskIntoConstraints = false
 
         selectedActorsStackView.orientation = .horizontal
-        selectedActorsStackView.spacing = 4
+        selectedActorsStackView.spacing = 6
         selectedActorsStackView.translatesAutoresizingMaskIntoConstraints = false
 
-        selectedActorsScrollView.documentView = selectedActorsStackView
+        let selectedActorsDocView = FlippedView()
+        selectedActorsDocView.translatesAutoresizingMaskIntoConstraints = false
+        selectedActorsDocView.addSubview(selectedActorsStackView)
+
+        selectedActorsScrollView.documentView = selectedActorsDocView
         selectedActorsScrollView.hasHorizontalScroller = true
         selectedActorsScrollView.hasVerticalScroller = false
         selectedActorsScrollView.drawsBackground = false
         selectedActorsScrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            selectedActorsDocView.heightAnchor.constraint(equalTo: selectedActorsScrollView.contentView.heightAnchor),
+            selectedActorsDocView.topAnchor.constraint(equalTo: selectedActorsScrollView.contentView.topAnchor),
+            selectedActorsDocView.leadingAnchor.constraint(equalTo: selectedActorsScrollView.contentView.leadingAnchor),
+
+            selectedActorsStackView.leadingAnchor.constraint(equalTo: selectedActorsDocView.leadingAnchor, constant: 4),
+            selectedActorsStackView.trailingAnchor.constraint(equalTo: selectedActorsDocView.trailingAnchor, constant: -4),
+            selectedActorsStackView.centerYAnchor.constraint(equalTo: selectedActorsDocView.centerYAnchor),
+        ])
 
         let filterRowStack = NSStackView(views: [actorSearchComboBox, filterMediaByActorsButton, selectActorsPopoverButton])
         filterRowStack.orientation = .horizontal
@@ -484,10 +503,10 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             filterRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             filterRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
 
-            selectedActorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 16),
+            selectedActorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 8),
             selectedActorsScrollView.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             selectedActorsScrollView.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
-            selectedActorsScrollView.heightAnchor.constraint(equalToConstant: 28),
+            selectedActorsScrollView.heightAnchor.constraint(equalToConstant: 32),
 
             headerLabel.topAnchor.constraint(equalTo: selectedActorsScrollView.bottomAnchor, constant: 8),
             headerLabel.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
