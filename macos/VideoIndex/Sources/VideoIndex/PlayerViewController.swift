@@ -35,7 +35,7 @@ final class CustomTableRowView: NSTableRowView {
     }
 }
 
-final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComboBoxDelegate {
+final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComboBoxDelegate, NSSearchFieldDelegate {
 
     private let rootDir: String
     private let db: Database
