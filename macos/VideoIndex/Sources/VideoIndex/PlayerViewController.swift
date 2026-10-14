@@ -79,6 +79,15 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     private var currentMediaActors: [Database.Actor] = []
     private var filteredMediaActors: [Database.Actor] = []
     private var allExistingActors: [Database.Actor] = []
+    private var selectedSearchActors: [Database.Actor] = []
+    private let selectedActorsStackView = NSStackView()
+    private let selectedActorsScrollView = NSScrollView()
+    private let selectActorsPopoverButton = NSButton(title: "Select Actors…", target: nil, action: nil)
+    private var selectActorsPopover: NSPopover?
+    private var popoverTableView: NSTableView?
+    private var popoverSearchField: NSSearchField?
+    private var popoverFilteredActors: [Database.Actor] = []
+
     private let actorsContainerView = NSView()
     private let actorsTableView = NSTableView()
     private let actorsScrollView = NSScrollView()
@@ -437,7 +446,22 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         removeActorButton.action = #selector(removeActorClicked(_:))
         removeActorButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let filterRowStack = NSStackView(views: [actorSearchComboBox, filterMediaByActorsButton])
+        selectActorsPopoverButton.bezelStyle = .rounded
+        selectActorsPopoverButton.target = self
+        selectActorsPopoverButton.action = #selector(openSelectActorsPopover(_:))
+        selectActorsPopoverButton.translatesAutoresizingMaskIntoConstraints = false
+
+        selectedActorsStackView.orientation = .horizontal
+        selectedActorsStackView.spacing = 4
+        selectedActorsStackView.translatesAutoresizingMaskIntoConstraints = false
+
+        selectedActorsScrollView.documentView = selectedActorsStackView
+        selectedActorsScrollView.hasHorizontalScroller = true
+        selectedActorsScrollView.hasVerticalScroller = false
+        selectedActorsScrollView.drawsBackground = false
+        selectedActorsScrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let filterRowStack = NSStackView(views: [actorSearchComboBox, filterMediaByActorsButton, selectActorsPopoverButton])
         filterRowStack.orientation = .horizontal
         filterRowStack.spacing = 6
         filterRowStack.translatesAutoresizingMaskIntoConstraints = false
@@ -449,6 +473,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
         actorsContainerView.addSubview(headerLabel)
         actorsContainerView.addSubview(filterRowStack)
+        actorsContainerView.addSubview(selectedActorsScrollView)
         actorsContainerView.addSubview(actorsScrollView)
         actorsContainerView.addSubview(addRowStack)
 
@@ -460,7 +485,12 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             filterRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             filterRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
 
-            actorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 4),
+            selectedActorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 2),
+            selectedActorsScrollView.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
+            selectedActorsScrollView.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
+            selectedActorsScrollView.heightAnchor.constraint(equalToConstant: 26),
+
+            actorsScrollView.topAnchor.constraint(equalTo: selectedActorsScrollView.bottomAnchor, constant: 4),
             actorsScrollView.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             actorsScrollView.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
 
@@ -504,30 +534,150 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         actorsTableView.reloadData()
     }
 
-    @objc private func filterMediaByTypedActorsClicked(_ sender: Any?) {
-        let filterText = actorSearchComboBox.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sourceText = filterText.isEmpty ? actorInputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) : filterText
-        let actorNames = sourceText.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    private func updateSelectedSearchActorsTokens() {
+        selectedActorsStackView.views.forEach { $0.removeFromSuperview() }
 
-        guard !actorNames.isEmpty else { return }
+        for (index, actor) in selectedSearchActors.enumerated() {
+            let pillView = NSView()
+            pillView.wantsLayer = true
+            pillView.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+            pillView.layer?.cornerRadius = 10
+            pillView.translatesAutoresizingMaskIntoConstraints = false
 
-        var matchedActorIDs: [Int] = []
-        for name in actorNames {
-            if let found = allExistingActors.first(where: { $0.name.lowercased() == name.lowercased() }) {
-                matchedActorIDs.append(found.id)
-            } else if let actor = db.addOrGetActor(name: name) {
-                matchedActorIDs.append(actor.id)
-            }
+            let label = NSTextField(labelWithString: actor.name)
+            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.translatesAutoresizingMaskIntoConstraints = false
+
+            let closeBtn = NSButton(title: "✕", target: self, action: #selector(deselectSearchActorTokenClicked(_:)))
+            closeBtn.bezelStyle = .inline
+            closeBtn.isBordered = false
+            closeBtn.font = .systemFont(ofSize: 10, weight: .bold)
+            closeBtn.tag = index
+            closeBtn.translatesAutoresizingMaskIntoConstraints = false
+
+            pillView.addSubview(label)
+            pillView.addSubview(closeBtn)
+
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: 8),
+                label.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
+
+                closeBtn.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 4),
+                closeBtn.trailingAnchor.constraint(equalTo: pillView.trailingAnchor, constant: -6),
+                closeBtn.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
+                pillView.heightAnchor.constraint(equalToConstant: 20)
+            ])
+
+            selectedActorsStackView.addArrangedSubview(pillView)
         }
+        applySelectedSearchActorsFilter()
+    }
 
-        guard !matchedActorIDs.isEmpty else { return }
+    @objc private func deselectSearchActorTokenClicked(_ sender: NSButton) {
+        let index = sender.tag
+        guard selectedSearchActors.indices.contains(index) else { return }
+        selectedSearchActors.remove(at: index)
+        updateSelectedSearchActorsTokens()
+        popoverTableView?.reloadData()
+    }
 
+    private func toggleActorSelection(_ actor: Database.Actor) {
+        if let idx = selectedSearchActors.firstIndex(where: { $0.id == actor.id }) {
+            selectedSearchActors.remove(at: idx)
+        } else {
+            selectedSearchActors.append(actor)
+        }
+        updateSelectedSearchActorsTokens()
+        popoverTableView?.reloadData()
+    }
+
+    private func applySelectedSearchActorsFilter() {
+        guard !selectedSearchActors.isEmpty else { return }
+
+        let matchedActorIDs = selectedSearchActors.map { $0.id }
         let idList = matchedActorIDs.map(String.init).joined(separator: ", ")
         let sql = "AND id IN (SELECT media_id FROM media_actors WHERE actor_id IN (\(idList)) GROUP BY media_id HAVING COUNT(DISTINCT actor_id) = \(matchedActorIDs.count))"
 
         conditionExpression = sql
         conditionField.stringValue = sql
         reload()
+    }
+
+    @objc private func openSelectActorsPopover(_ sender: NSButton) {
+        if selectActorsPopover == nil {
+            let popoverVC = NSViewController()
+            let popoverView = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 320))
+
+            let searchField = NSSearchField()
+            searchField.placeholderString = "Filter actors…"
+            searchField.delegate = self
+            searchField.translatesAutoresizingMaskIntoConstraints = false
+
+            let popoverScroll = NSScrollView()
+            let table = NSTableView()
+            table.headerView = nil
+
+            let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("popoverActorCol"))
+            col.width = 250
+            table.addTableColumn(col)
+            table.dataSource = self
+            table.delegate = self
+            popoverScroll.documentView = table
+            popoverScroll.hasVerticalScroller = true
+            popoverScroll.translatesAutoresizingMaskIntoConstraints = false
+
+            popoverView.addSubview(searchField)
+            popoverView.addSubview(popoverScroll)
+
+            NSLayoutConstraint.activate([
+                searchField.topAnchor.constraint(equalTo: popoverView.topAnchor, constant: 8),
+                searchField.leadingAnchor.constraint(equalTo: popoverView.leadingAnchor, constant: 8),
+                searchField.trailingAnchor.constraint(equalTo: popoverView.trailingAnchor, constant: -8),
+
+                popoverScroll.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
+                popoverScroll.leadingAnchor.constraint(equalTo: popoverView.leadingAnchor, constant: 8),
+                popoverScroll.trailingAnchor.constraint(equalTo: popoverView.trailingAnchor, constant: -8),
+                popoverScroll.bottomAnchor.constraint(equalTo: popoverView.bottomAnchor, constant: -8),
+            ])
+
+            popoverVC.view = popoverView
+            let pop = NSPopover()
+            pop.contentViewController = popoverVC
+            pop.behavior = .transient
+
+            self.selectActorsPopover = pop
+            self.popoverTableView = table
+            self.popoverSearchField = searchField
+        }
+
+        popoverFilteredActors = allExistingActors
+        popoverSearchField?.stringValue = ""
+        popoverTableView?.reloadData()
+        selectActorsPopover?.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+    }
+
+    @objc private func filterMediaByTypedActorsClicked(_ sender: Any?) {
+        let filterText = actorSearchComboBox.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !filterText.isEmpty {
+            let actorNames = filterText.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+
+            for name in actorNames {
+                if let found = allExistingActors.first(where: { $0.name.lowercased() == name.lowercased() }) {
+                    if !selectedSearchActors.contains(where: { $0.id == found.id }) {
+                        selectedSearchActors.append(found)
+                    }
+                } else if let actor = db.addOrGetActor(name: name) {
+                    if !selectedSearchActors.contains(where: { $0.id == actor.id }) {
+                        selectedSearchActors.append(actor)
+                    }
+                }
+            }
+            actorSearchComboBox.stringValue = ""
+            refreshAllActorsList()
+            updateSelectedSearchActorsTokens()
+        } else if !selectedSearchActors.isEmpty {
+            applySelectedSearchActorsFilter()
+        }
     }
 
     @objc private func addActorClicked(_ sender: Any?) {
@@ -1547,6 +1697,9 @@ extension PlayerViewController: NSSplitViewDelegate {
 
 extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
+        if tableView === popoverTableView {
+            return popoverFilteredActors.count
+        }
         if tableView === actorsTableView {
             return displayedMediaActors.count
         }
@@ -1592,6 +1745,35 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === popoverTableView {
+            guard popoverFilteredActors.indices.contains(row) else { return nil }
+            let actor = popoverFilteredActors[row]
+            let cellId = NSUserInterfaceItemIdentifier("popoverActorCell")
+            let cell: NSTableCellView
+            let checkbox: NSButton
+            if let reused = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView,
+               let cb = reused.subviews.first as? NSButton {
+                cell = reused
+                checkbox = cb
+            } else {
+                cell = NSTableCellView()
+                cell.identifier = cellId
+                checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(popoverActorCheckboxToggled(_:)))
+                checkbox.setButtonType(.switch)
+                checkbox.translatesAutoresizingMaskIntoConstraints = false
+                cell.addSubview(checkbox)
+                NSLayoutConstraint.activate([
+                    checkbox.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                    checkbox.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    checkbox.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                ])
+            }
+            checkbox.title = actor.name
+            checkbox.tag = row
+            checkbox.state = selectedSearchActors.contains(where: { $0.id == actor.id }) ? .on : .off
+            return cell
+        }
+
         if tableView === actorsTableView {
             let displayed = displayedMediaActors
             guard let identifier = tableColumn?.identifier, displayed.indices.contains(row) else { return nil }
@@ -1769,6 +1951,13 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
         return cell
     }
 
+    @objc private func popoverActorCheckboxToggled(_ sender: NSButton) {
+        let row = sender.tag
+        guard popoverFilteredActors.indices.contains(row) else { return }
+        let actor = popoverFilteredActors[row]
+        toggleActorSelection(actor)
+    }
+
     @objc private func mediaRowCheckboxToggled(_ sender: NSButton) {
         let row = sender.tag
         guard items.indices.contains(row) else { return }
@@ -1843,6 +2032,16 @@ extension PlayerViewController: NSTextFieldDelegate {
             reload() // a bad fragment now shows its error in statusLabel instead of just an empty table
         } else if field === actorSearchComboBox {
             actorsTableView.reloadData()
+        } else if field === popoverSearchField {
+            let filter = popoverSearchField?.stringValue.lowercased() ?? ""
+            if filter.isEmpty {
+                popoverFilteredActors = allExistingActors
+            } else {
+                popoverFilteredActors = allExistingActors.filter {
+                    $0.name.lowercased().contains(filter) || $0.altNames.lowercased().contains(filter)
+                }
+            }
+            popoverTableView?.reloadData()
         }
     }
 }
