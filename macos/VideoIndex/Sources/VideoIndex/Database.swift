@@ -220,6 +220,28 @@ final class Database {
         let width: Int?
         let duration: Double?
         let viewCount: Int?
+        let actorNames: [String]
+    }
+
+    func fetchMediaActorNamesMap() -> [Int: [String]] {
+        let sql = """
+        SELECT ma.media_id, a.name
+        FROM media_actors ma
+        JOIN actors a ON ma.actor_id = a.id
+        ORDER BY a.name ASC
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [:] }
+        defer { sqlite3_finalize(statement) }
+
+        var map: [Int: [String]] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let mediaID = Int(sqlite3_column_int(statement, 0))
+            if let name = columnText(statement, 1) {
+                map[mediaID, default: []].append(name)
+            }
+        }
+        return map
     }
 
     /// Fetches records for dashboard metrics.
@@ -252,6 +274,8 @@ final class Database {
             sqlite3_bind_text(statement, 1, "%\(search)%", -1, SQLITE_TRANSIENT)
         }
 
+        let actorMap = fetchMediaActorNamesMap()
+
         var records: [DashboardRecord] = []
         while sqlite3_step(statement) == SQLITE_ROW {
             let id = Int(sqlite3_column_int(statement, 0))
@@ -261,6 +285,7 @@ final class Database {
             let width = columnInt(statement, 4)
             let duration = columnDouble(statement, 5)
             let viewCount = columnInt(statement, 6)
+            let actorNames = actorMap[id] ?? []
 
             records.append(DashboardRecord(
                 id: id,
@@ -269,7 +294,8 @@ final class Database {
                 like: like,
                 width: width,
                 duration: duration,
-                viewCount: viewCount
+                viewCount: viewCount,
+                actorNames: actorNames
             ))
         }
         return records

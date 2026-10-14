@@ -16,7 +16,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
 
     // UI Controls
     private let scopeControl = NSSegmentedControl(labels: ["All Media", "Current Filter"], trackingMode: .selectOne, target: nil, action: nil)
-    private let treemapMetricControl = NSSegmentedControl(labels: ["By Likes", "By Resolutions", "By Durations", "By Views"], trackingMode: .selectOne, target: nil, action: nil)
+    private let treemapMetricControl = NSSegmentedControl(labels: ["By Likes", "By Resolutions", "By Durations", "By Views", "By Actors"], trackingMode: .selectOne, target: nil, action: nil)
 
     private let overviewCardsStack = NSStackView()
     private let treemapTitleLabel = NSTextField(labelWithString: "Squarified Treemap Visualization")
@@ -30,11 +30,13 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
     private let resolutionsTableView = NSTableView()
     private let durationsTableView = NSTableView()
     private let viewsTableView = NSTableView()
+    private let actorsTableView = NSTableView()
 
     private var likesStats: [GroupStat] = []
     private var resolutionsStats: [GroupStat] = []
     private var durationsStats: [GroupStat] = []
     private var viewsStats: [GroupStat] = []
+    private var actorsStats: [GroupStat] = []
 
     struct GroupStat {
         let key: String
@@ -134,11 +136,13 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
 
         // Breakdown Tables Setup
         setupTable(likesTableView, columns: [("tier", "Like Tier", 120), ("count", "Videos", 80), ("size", "Total Storage", 110), ("avg_size", "Avg Size", 90), ("pct", "% Storage", 90)])
+        setupTable(actorsTableView, columns: [("actor", "Actor Name", 160), ("size", "Total Storage", 110), ("count", "Videos", 80), ("pct", "% Storage", 90)])
         setupTable(resolutionsTableView, columns: [("res", "Resolution Class", 140), ("count", "Videos", 80), ("size", "Total Storage", 110), ("pct", "% Videos", 90)])
         setupTable(durationsTableView, columns: [("dur", "Duration Range", 140), ("count", "Videos", 80), ("total_dur", "Total Duration", 120), ("size", "Total Storage", 110), ("pct", "% Videos", 90)])
         setupTable(viewsTableView, columns: [("views", "View Tier", 140), ("count", "Videos", 80), ("size", "Total Storage", 110), ("pct", "% Videos", 90)])
 
         let likesBox = makeSectionBox(title: "File Sizes & Storage by Likes", view: likesTableView, height: 180)
+        let actorsBox = makeSectionBox(title: "Actors Breakdown", view: actorsTableView, height: 180)
         let resBox = makeSectionBox(title: "Resolutions Breakdown", view: resolutionsTableView, height: 150)
         let durBox = makeSectionBox(title: "Durations Breakdown", view: durationsTableView, height: 170)
         let viewsBox = makeSectionBox(title: "View Counts Breakdown", view: viewsTableView, height: 140)
@@ -150,6 +154,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             treemapTitleLabel,
             treemapView,
             likesBox,
+            actorsBox,
             resBox,
             durBox,
             viewsBox
@@ -194,6 +199,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             treemapView.heightAnchor.constraint(equalToConstant: 260),
 
             likesBox.widthAnchor.constraint(equalTo: stackView.widthAnchor),
+            actorsBox.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             resBox.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             durBox.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             viewsBox.widthAnchor.constraint(equalTo: stackView.widthAnchor),
@@ -311,6 +317,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
 
         // 4. Reload Tables
         likesTableView.reloadData()
+        actorsTableView.reloadData()
         resolutionsTableView.reloadData()
         durationsTableView.reloadData()
         viewsTableView.reloadData()
@@ -352,6 +359,56 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             guard let entry = likesMap[key] else { return nil }
             return GroupStat(key: key, title: entry.title, count: entry.count, totalSizeBytes: entry.bytes, totalDurationSec: entry.dur, color: entry.color)
         }
+
+        // Actors Breakdown
+        var actorCounts: [String: (count: Int, bytes: Int64, dur: Double)] = [:]
+        var unassignedCount = 0
+        var unassignedBytes: Int64 = 0
+        var unassignedDur: Double = 0
+
+        for r in records {
+            if r.actorNames.isEmpty {
+                unassignedCount += 1
+                unassignedBytes += r.fileSize
+                unassignedDur += r.duration ?? 0
+            } else {
+                for actorName in r.actorNames {
+                    let current = actorCounts[actorName] ?? (0, 0, 0)
+                    actorCounts[actorName] = (current.count + 1, current.bytes + r.fileSize, current.dur + (r.duration ?? 0))
+                }
+            }
+        }
+
+        let paletteColors: [NSColor] = [.systemBlue, .systemPurple, .systemOrange, .systemTeal, .systemGreen, .systemPink, .systemIndigo]
+        var sortedActorStats: [GroupStat] = actorCounts.enumerated().map { (idx, element) in
+            let color = paletteColors[idx % paletteColors.count]
+            return GroupStat(
+                key: element.key,
+                title: element.key,
+                count: element.value.count,
+                totalSizeBytes: element.value.bytes,
+                totalDurationSec: element.value.dur,
+                color: color
+            )
+        }.sorted {
+            if $0.totalSizeBytes != $1.totalSizeBytes {
+                return $0.totalSizeBytes > $1.totalSizeBytes
+            }
+            return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+
+        if unassignedCount > 0 || sortedActorStats.isEmpty {
+            let unassignedStat = GroupStat(
+                key: "__unassigned__",
+                title: "Unassigned / No Actor",
+                count: unassignedCount,
+                totalSizeBytes: unassignedBytes,
+                totalDurationSec: unassignedDur,
+                color: .systemGray
+            )
+            sortedActorStats.append(unassignedStat)
+        }
+        actorsStats = sortedActorStats
 
         // Resolutions Breakdown
         var resMap: [String: (title: String, count: Int, bytes: Int64, dur: Double, color: NSColor)] = [
@@ -525,6 +582,22 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
                 ))
             }
 
+        case 4: // By Actors (visualize storage size)
+            treemapTitleLabel.stringValue = "Squarified Treemap: Storage Distribution by Actor"
+            for stat in actorsStats {
+                guard stat.totalSizeBytes > 0 else { continue }
+                let pct = totalBytes > 0 ? (Double(stat.totalSizeBytes) / Double(totalBytes)) * 100.0 : 0
+                treemapItems.append(TreemapItem(
+                    id: stat.key,
+                    title: stat.title,
+                    subtitle: "\(stat.count) videos",
+                    value: Double(stat.totalSizeBytes),
+                    formattedValue: formatBytes(stat.totalSizeBytes),
+                    percentage: pct,
+                    color: stat.color
+                ))
+            }
+
         default:
             break
         }
@@ -567,6 +640,7 @@ extension DashboardWindowController: NSTableViewDataSource, NSTableViewDelegate 
 
     func numberOfRows(in tableView: NSTableView) -> Int {
         if tableView === likesTableView { return likesStats.count }
+        if tableView === actorsTableView { return actorsStats.count }
         if tableView === resolutionsTableView { return resolutionsStats.count }
         if tableView === durationsTableView { return durationsStats.count }
         if tableView === viewsTableView { return viewsStats.count }
@@ -592,6 +666,17 @@ extension DashboardWindowController: NSTableViewDataSource, NSTableViewDelegate 
             case "count": text = "\(stat.count)"
             case "size": text = formatBytes(stat.totalSizeBytes)
             case "avg_size": text = formatBytes(avgBytes)
+            case "pct": text = String(format: "%.1f%%", pct)
+            default: text = ""
+            }
+        } else if tableView === actorsTableView, actorsStats.indices.contains(row) {
+            let stat = actorsStats[row]
+            let pct = totalBytes > 0 ? (Double(stat.totalSizeBytes) / Double(totalBytes)) * 100.0 : 0
+
+            switch colId {
+            case "actor": text = stat.title; customColor = stat.color
+            case "size": text = formatBytes(stat.totalSizeBytes)
+            case "count": text = "\(stat.count)"
             case "pct": text = String(format: "%.1f%%", pct)
             default: text = ""
             }
