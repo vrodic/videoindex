@@ -85,7 +85,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     private let actorInputField = NSComboBox()
     private let addActorButton = NSButton(title: "Add Actor", target: nil, action: nil)
     private let removeActorButton = NSButton(title: "Remove Actor", target: nil, action: nil)
-    private let actorFilterField = NSTextField()
+    private let actorSearchComboBox = NSComboBox()
     private let filterMediaByActorsButton = NSButton(title: "Filter Media", target: nil, action: nil)
 
     private var wordCloudWindowController: WordCloudWindowController?
@@ -406,10 +406,13 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         actorsScrollView.hasVerticalScroller = true
         actorsScrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        actorFilterField.placeholderString = "Search actors or type comma-separated actors to filter media…"
-        actorFilterField.delegate = self
-        actorFilterField.allowsEditingTextAttributes = true
-        actorFilterField.translatesAutoresizingMaskIntoConstraints = false
+        actorSearchComboBox.placeholderString = "Search media by actor(s)… (Press Enter to filter)"
+        actorSearchComboBox.hasVerticalScroller = true
+        actorSearchComboBox.completes = true
+        actorSearchComboBox.delegate = self
+        actorSearchComboBox.target = self
+        actorSearchComboBox.action = #selector(filterMediaByTypedActorsClicked(_:))
+        actorSearchComboBox.translatesAutoresizingMaskIntoConstraints = false
 
         filterMediaByActorsButton.bezelStyle = .rounded
         filterMediaByActorsButton.target = self
@@ -434,7 +437,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         removeActorButton.action = #selector(removeActorClicked(_:))
         removeActorButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let filterRowStack = NSStackView(views: [actorFilterField, filterMediaByActorsButton])
+        let filterRowStack = NSStackView(views: [actorSearchComboBox, filterMediaByActorsButton])
         filterRowStack.orientation = .horizontal
         filterRowStack.spacing = 6
         filterRowStack.translatesAutoresizingMaskIntoConstraints = false
@@ -474,12 +477,15 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
     private func refreshAllActorsList() {
         allExistingActors = db.fetchAllActors()
+        let actorNames = allExistingActors.map { $0.name }
         actorInputField.removeAllItems()
-        actorInputField.addItems(withObjectValues: allExistingActors.map { $0.name })
+        actorInputField.addItems(withObjectValues: actorNames)
+        actorSearchComboBox.removeAllItems()
+        actorSearchComboBox.addItems(withObjectValues: actorNames)
     }
 
     private var displayedMediaActors: [Database.Actor] {
-        let filterText = actorFilterField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filterText = actorSearchComboBox.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if filterText.isEmpty {
             return currentMediaActors
         }
@@ -499,7 +505,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     }
 
     @objc private func filterMediaByTypedActorsClicked(_ sender: Any?) {
-        let filterText = actorFilterField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filterText = actorSearchComboBox.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let sourceText = filterText.isEmpty ? actorInputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) : filterText
         let actorNames = sourceText.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
 
@@ -1795,14 +1801,23 @@ extension PlayerViewController: NSTextFieldDelegate {
     }
 
     func comboBoxSelectionDidChange(_ notification: Notification) {
-        guard let comboBox = notification.object as? NSComboBox, comboBox === conditionField else { return }
-        let selectedIndex = comboBox.indexOfSelectedItem
-        guard selectedIndex >= 0, selectedIndex < comboBox.numberOfItems else { return }
-        if let selectedValue = comboBox.itemObjectValue(at: selectedIndex) as? String {
-            conditionExpression = selectedValue
-            conditionField.stringValue = selectedValue
-            hasAddedCurrentConditionToHistory = true
-            reload()
+        guard let comboBox = notification.object as? NSComboBox else { return }
+        if comboBox === conditionField {
+            let selectedIndex = comboBox.indexOfSelectedItem
+            guard selectedIndex >= 0, selectedIndex < comboBox.numberOfItems else { return }
+            if let selectedValue = comboBox.itemObjectValue(at: selectedIndex) as? String {
+                conditionExpression = selectedValue
+                conditionField.stringValue = selectedValue
+                hasAddedCurrentConditionToHistory = true
+                reload()
+            }
+        } else if comboBox === actorSearchComboBox {
+            let selectedIndex = comboBox.indexOfSelectedItem
+            guard selectedIndex >= 0, selectedIndex < comboBox.numberOfItems else { return }
+            if let selectedValue = comboBox.itemObjectValue(at: selectedIndex) as? String {
+                actorSearchComboBox.stringValue = selectedValue
+                filterMediaByTypedActorsClicked(comboBox)
+            }
         }
     }
 
@@ -1815,7 +1830,7 @@ extension PlayerViewController: NSTextFieldDelegate {
             conditionExpression = conditionField.stringValue
             hasAddedCurrentConditionToHistory = false
             reload() // a bad fragment now shows its error in statusLabel instead of just an empty table
-        } else if field === actorFilterField {
+        } else if field === actorSearchComboBox {
             actorsTableView.reloadData()
         }
     }
