@@ -1,6 +1,11 @@
 import Cocoa
 import AVFoundation
 
+/// Flipped view container used for documentViews in scroll views
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 /// Custom table row view that draws a subtle background highlight for played / viewed videos
 final class CustomTableRowView: NSTableRowView {
     var isViewed: Bool = false {
@@ -35,7 +40,7 @@ final class CustomTableRowView: NSTableRowView {
     }
 }
 
-final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComboBoxDelegate {
+final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComboBoxDelegate, NSSearchFieldDelegate {
 
     private let rootDir: String
     private let db: Database
@@ -75,6 +80,28 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     private let conditionField = NSComboBox()
     private let statusLabel = NSTextField(labelWithString: "")
 
+    // Actors section properties
+    private var currentMediaActors: [Database.Actor] = []
+    private var filteredMediaActors: [Database.Actor] = []
+    private var allExistingActors: [Database.Actor] = []
+    private var selectedSearchActors: [Database.Actor] = []
+    private let selectedActorsStackView = NSStackView()
+    private let selectedActorsScrollView = NSScrollView()
+    private let selectActorsPopoverButton = NSButton(title: "Select Actors…", target: nil, action: nil)
+    private var selectActorsPopover: NSPopover?
+    private var popoverTableView: NSTableView?
+    private var popoverSearchField: NSSearchField?
+    private var popoverFilteredActors: [Database.Actor] = []
+
+    private let actorsContainerView = NSView()
+    private let actorsTableView = NSTableView()
+    private let actorsScrollView = NSScrollView()
+    private let actorInputField = NSComboBox()
+    private let addActorButton = NSButton(title: "Add Actor", target: nil, action: nil)
+    private let removeActorButton = NSButton(title: "Remove Actor", target: nil, action: nil)
+    private let actorSearchComboBox = NSComboBox()
+    private let filterMediaByActorsButton = NSButton(title: "Filter Media", target: nil, action: nil)
+
     private var wordCloudWindowController: WordCloudWindowController?
     private var dashboardWindowController: DashboardWindowController?
 
@@ -95,6 +122,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     private var thumbnailGenerationTask: Task<Void, Never>?
     private var sessionPlayedIDs: Set<Int> = []
     private var missingFileIDs: Set<Int> = []
+    private var checkedItemIDs: Set<Int> = []
 
     private let saveThumbnailsToDiskKey = "SaveThumbnailsToDisk"
     private var saveThumbnailsToDisk: Bool {
@@ -183,6 +211,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     private var upNextAssignedItemIDs: [Int?] = []
 
     private let columnDefinitions: [(id: String, title: String, width: CGFloat)] = [
+        ("select", "✓", 40),
         ("id", "ID", 60),
         ("filename", "Filename", 520),
         ("views", "Views", 60),
@@ -240,7 +269,9 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             tableColumn.title = column.title
             tableColumn.width = column.width
             tableColumn.resizingMask = column.id == "filename" ? .autoresizingMask : .userResizingMask
-            tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.id, ascending: true)
+            if column.id != "select" {
+                tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.id, ascending: true)
+            }
             tableView.addTableColumn(tableColumn)
         }
         tableView.usesAlternatingRowBackgroundColors = true
@@ -274,58 +305,503 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         populateConditionComboBox()
 
         buildPreviewPanel()
+        buildActorsSection()
 
-        splitView.isVertical = true
-        splitView.dividerStyle = .thin
-        splitView.delegate = self
-        splitView.translatesAutoresizingMaskIntoConstraints = false
-        splitView.addArrangedSubview(scrollView)
-        splitView.addArrangedSubview(previewContainer)
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
-        splitView.setHoldingPriority(.dragThatCannotResizeWindow, forSubviewAt: 1)
-        // NOTE: deliberately no fixed-width constraint on previewContainer —
-        // a required-priority width constraint fights NSSplitView's own
-        // layout on every drag, which is why the divider previously
-        // wouldn't move. viewDidLayout() sets an initial width once instead;
-        // the delegate below sets min/max but otherwise lets drags happen.
-        // autosaveName makes NSSplitView remember the divider position
-        // across launches on its own; viewDidLayout() only applies a
-        // default the first time there's nothing to restore.
-        splitView.autosaveName = NSSplitView.AutosaveName(splitViewAutosaveName)
+        let leftPaneContainer = NSView()
+        leftPaneContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        leftPaneContainer.addSubview(searchField)
+        leftPaneContainer.addSubview(wordCloudButton)
+        leftPaneContainer.addSubview(scrollView)
+        leftPaneContainer.addSubview(conditionField)
+        leftPaneContainer.addSubview(statusLabel)
+        leftPaneContainer.addSubview(actorsContainerView)
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(searchField)
-        view.addSubview(wordCloudButton)
-        view.addSubview(splitView)
-        view.addSubview(conditionField)
-        view.addSubview(statusLabel)
-
         NSLayoutConstraint.activate([
-            searchField.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
-            searchField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            searchField.topAnchor.constraint(equalTo: leftPaneContainer.topAnchor, constant: 8),
+            searchField.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor, constant: 8),
             searchField.trailingAnchor.constraint(equalTo: wordCloudButton.leadingAnchor, constant: -8),
 
             wordCloudButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
-            wordCloudButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            wordCloudButton.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor, constant: -8),
             wordCloudButton.widthAnchor.constraint(equalToConstant: 110),
 
-            splitView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10),
-            splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
+            scrollView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor, constant: 8),
+            scrollView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor, constant: -8),
 
-            conditionField.topAnchor.constraint(equalTo: splitView.bottomAnchor, constant: 10),
-            conditionField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            conditionField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            conditionField.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 8),
+            conditionField.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor, constant: 8),
+            conditionField.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor, constant: -8),
 
-            statusLabel.topAnchor.constraint(equalTo: conditionField.bottomAnchor, constant: 6),
-            statusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            statusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
-            statusLabel.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
+            statusLabel.topAnchor.constraint(equalTo: conditionField.bottomAnchor, constant: 4),
+            statusLabel.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor, constant: 8),
+            statusLabel.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor, constant: -8),
+
+            actorsContainerView.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
+            actorsContainerView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor, constant: 8),
+            actorsContainerView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor, constant: -8),
+            actorsContainerView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor, constant: -8),
+            actorsContainerView.heightAnchor.constraint(equalToConstant: 240),
         ])
+
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.delegate = self
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        splitView.addArrangedSubview(leftPaneContainer)
+        splitView.addArrangedSubview(previewContainer)
+        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+        splitView.setHoldingPriority(.dragThatCannotResizeWindow, forSubviewAt: 1)
+        splitView.autosaveName = NSSplitView.AutosaveName(splitViewAutosaveName)
+
+        view.addSubview(splitView)
+
+        NSLayoutConstraint.activate([
+            splitView.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
+            splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -8),
+        ])
+    }
+
+    // MARK: - Actors Section UI Construction & Logic
+
+    private func buildActorsSection() {
+        actorsContainerView.translatesAutoresizingMaskIntoConstraints = false
+
+        let headerLabel = NSTextField(labelWithString: "Actors for Selected Media")
+        headerLabel.font = .boldSystemFont(ofSize: 12)
+        headerLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        // Configure actors table
+        let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorName"))
+        nameCol.title = "Name (Editable)"
+        nameCol.width = 130
+
+        let altCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorAltNames"))
+        altCol.title = "Alternate Names (Editable)"
+        altCol.width = 170
+
+        let countCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorCount"))
+        countCol.title = "Media Count"
+        countCol.width = 80
+
+        let assignCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorAssign"))
+        assignCol.title = "Assign"
+        assignCol.width = 46
+
+        let conditionCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorCondition"))
+        conditionCol.title = "Filter"
+        conditionCol.width = 46
+
+        let searchCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("actorSearch"))
+        searchCol.title = "Search"
+        searchCol.width = 46
+
+        actorsTableView.addTableColumn(nameCol)
+        actorsTableView.addTableColumn(altCol)
+        actorsTableView.addTableColumn(countCol)
+        actorsTableView.addTableColumn(assignCol)
+        actorsTableView.addTableColumn(conditionCol)
+        actorsTableView.addTableColumn(searchCol)
+
+        actorsTableView.usesAlternatingRowBackgroundColors = true
+        actorsTableView.allowsMultipleSelection = false
+        actorsTableView.delegate = self
+        actorsTableView.dataSource = self
+
+        actorsScrollView.documentView = actorsTableView
+        actorsScrollView.hasVerticalScroller = true
+        actorsScrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        actorSearchComboBox.placeholderString = "Search media by actor(s)… (Press Enter to filter)"
+        actorSearchComboBox.hasVerticalScroller = true
+        actorSearchComboBox.completes = true
+        actorSearchComboBox.delegate = self
+        actorSearchComboBox.target = self
+        actorSearchComboBox.action = #selector(filterMediaByTypedActorsClicked(_:))
+        actorSearchComboBox.translatesAutoresizingMaskIntoConstraints = false
+
+        filterMediaByActorsButton.bezelStyle = .rounded
+        filterMediaByActorsButton.target = self
+        filterMediaByActorsButton.action = #selector(filterMediaByTypedActorsClicked(_:))
+        filterMediaByActorsButton.translatesAutoresizingMaskIntoConstraints = false
+
+        actorInputField.placeholderString = "Add actor to selected media… (Press Enter)"
+        actorInputField.hasVerticalScroller = true
+        actorInputField.completes = true
+        actorInputField.delegate = self
+        actorInputField.target = self
+        actorInputField.action = #selector(addActorClicked(_:))
+        actorInputField.translatesAutoresizingMaskIntoConstraints = false
+
+        addActorButton.bezelStyle = .rounded
+        addActorButton.target = self
+        addActorButton.action = #selector(addActorClicked(_:))
+        addActorButton.translatesAutoresizingMaskIntoConstraints = false
+
+        removeActorButton.bezelStyle = .rounded
+        removeActorButton.target = self
+        removeActorButton.action = #selector(removeActorClicked(_:))
+        removeActorButton.translatesAutoresizingMaskIntoConstraints = false
+
+        selectActorsPopoverButton.bezelStyle = .rounded
+        selectActorsPopoverButton.target = self
+        selectActorsPopoverButton.action = #selector(openSelectActorsPopover(_:))
+        selectActorsPopoverButton.translatesAutoresizingMaskIntoConstraints = false
+
+        selectedActorsStackView.orientation = .horizontal
+        selectedActorsStackView.spacing = 6
+        selectedActorsStackView.translatesAutoresizingMaskIntoConstraints = false
+
+        let selectedActorsDocView = FlippedView()
+        selectedActorsDocView.translatesAutoresizingMaskIntoConstraints = false
+        selectedActorsDocView.addSubview(selectedActorsStackView)
+
+        selectedActorsScrollView.documentView = selectedActorsDocView
+        selectedActorsScrollView.hasHorizontalScroller = true
+        selectedActorsScrollView.hasVerticalScroller = false
+        selectedActorsScrollView.drawsBackground = false
+        selectedActorsScrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            selectedActorsDocView.heightAnchor.constraint(equalTo: selectedActorsScrollView.contentView.heightAnchor),
+            selectedActorsDocView.topAnchor.constraint(equalTo: selectedActorsScrollView.contentView.topAnchor),
+            selectedActorsDocView.leadingAnchor.constraint(equalTo: selectedActorsScrollView.contentView.leadingAnchor),
+
+            selectedActorsStackView.leadingAnchor.constraint(equalTo: selectedActorsDocView.leadingAnchor, constant: 4),
+            selectedActorsStackView.trailingAnchor.constraint(equalTo: selectedActorsDocView.trailingAnchor, constant: -4),
+            selectedActorsStackView.centerYAnchor.constraint(equalTo: selectedActorsDocView.centerYAnchor),
+        ])
+
+        let filterRowStack = NSStackView(views: [actorSearchComboBox, filterMediaByActorsButton, selectActorsPopoverButton])
+        filterRowStack.orientation = .horizontal
+        filterRowStack.alignment = .centerY
+        filterRowStack.spacing = 6
+        filterRowStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let addRowStack = NSStackView(views: [actorInputField, addActorButton, removeActorButton])
+        addRowStack.orientation = .horizontal
+        addRowStack.alignment = .centerY
+        addRowStack.spacing = 6
+        addRowStack.translatesAutoresizingMaskIntoConstraints = false
+
+        actorsContainerView.addSubview(filterRowStack)
+        actorsContainerView.addSubview(selectedActorsScrollView)
+        actorsContainerView.addSubview(headerLabel)
+        actorsContainerView.addSubview(actorsScrollView)
+        actorsContainerView.addSubview(addRowStack)
+
+        NSLayoutConstraint.activate([
+            filterRowStack.topAnchor.constraint(equalTo: actorsContainerView.topAnchor),
+            filterRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
+            filterRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
+
+            selectedActorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 8),
+            selectedActorsScrollView.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
+            selectedActorsScrollView.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
+            selectedActorsScrollView.heightAnchor.constraint(equalToConstant: 32),
+
+            headerLabel.topAnchor.constraint(equalTo: selectedActorsScrollView.bottomAnchor, constant: 8),
+            headerLabel.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
+
+            actorsScrollView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 4),
+            actorsScrollView.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
+            actorsScrollView.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
+
+            addRowStack.topAnchor.constraint(equalTo: actorsScrollView.bottomAnchor, constant: 6),
+            addRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
+            addRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
+            addRowStack.bottomAnchor.constraint(equalTo: actorsContainerView.bottomAnchor),
+
+            actorInputField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
+        ])
+
+        refreshAllActorsList()
+    }
+
+    private func refreshAllActorsList() {
+        allExistingActors = db.fetchAllActors()
+        let actorNames = allExistingActors.map { $0.name }
+        actorInputField.removeAllItems()
+        actorInputField.addItems(withObjectValues: actorNames)
+        actorSearchComboBox.removeAllItems()
+        actorSearchComboBox.addItems(withObjectValues: actorNames)
+    }
+
+    private var displayedMediaActors: [Database.Actor] {
+        return currentMediaActors
+    }
+
+    private func refreshCurrentMediaActors() {
+        if let row = selectedRow, items.indices.contains(row) {
+            let mediaID = items[row].id
+            currentMediaActors = db.fetchActorsForMedia(mediaID: mediaID)
+        } else {
+            currentMediaActors = []
+        }
+        actorsTableView.reloadData()
+    }
+
+    private func updateSelectedSearchActorsTokens() {
+        selectedActorsStackView.views.forEach { $0.removeFromSuperview() }
+
+        for (index, actor) in selectedSearchActors.enumerated() {
+            let pillView = NSView()
+            pillView.wantsLayer = true
+            pillView.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+            pillView.layer?.cornerRadius = 10
+            pillView.translatesAutoresizingMaskIntoConstraints = false
+
+            let label = NSTextField(labelWithString: actor.name)
+            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.translatesAutoresizingMaskIntoConstraints = false
+
+            let closeBtn = NSButton(title: "✕", target: self, action: #selector(deselectSearchActorTokenClicked(_:)))
+            closeBtn.bezelStyle = .inline
+            closeBtn.isBordered = false
+            closeBtn.font = .systemFont(ofSize: 10, weight: .bold)
+            closeBtn.tag = index
+            closeBtn.translatesAutoresizingMaskIntoConstraints = false
+
+            pillView.addSubview(label)
+            pillView.addSubview(closeBtn)
+
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: 8),
+                label.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
+
+                closeBtn.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 4),
+                closeBtn.trailingAnchor.constraint(equalTo: pillView.trailingAnchor, constant: -6),
+                closeBtn.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
+                pillView.heightAnchor.constraint(equalToConstant: 22)
+            ])
+
+            selectedActorsStackView.addArrangedSubview(pillView)
+        }
+        applySelectedSearchActorsFilter()
+    }
+
+    @objc private func deselectSearchActorTokenClicked(_ sender: NSButton) {
+        let index = sender.tag
+        guard selectedSearchActors.indices.contains(index) else { return }
+        selectedSearchActors.remove(at: index)
+        updateSelectedSearchActorsTokens()
+        popoverTableView?.reloadData()
+    }
+
+    private func toggleActorSelection(_ actor: Database.Actor) {
+        if let idx = selectedSearchActors.firstIndex(where: { $0.id == actor.id }) {
+            selectedSearchActors.remove(at: idx)
+        } else {
+            selectedSearchActors.append(actor)
+        }
+        updateSelectedSearchActorsTokens()
+        popoverTableView?.reloadData()
+    }
+
+    private func applySelectedSearchActorsFilter() {
+        if selectedSearchActors.isEmpty {
+            if conditionExpression.contains("FROM media_actors") {
+                conditionExpression = ""
+                conditionField.stringValue = ""
+                reload()
+            }
+            return
+        }
+
+        let matchedActorIDs = selectedSearchActors.map { $0.id }
+        let idList = matchedActorIDs.map(String.init).joined(separator: ", ")
+        let sql = "AND id IN (SELECT media_id FROM media_actors WHERE actor_id IN (\(idList)) GROUP BY media_id HAVING COUNT(DISTINCT actor_id) = \(matchedActorIDs.count))"
+
+        conditionExpression = sql
+        conditionField.stringValue = sql
+        reload()
+    }
+
+    @objc private func openSelectActorsPopover(_ sender: NSButton) {
+        if selectActorsPopover == nil {
+            let popoverVC = NSViewController()
+            let popoverView = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 320))
+
+            let searchField = NSSearchField()
+            searchField.placeholderString = "Filter actors…"
+            searchField.delegate = self
+            searchField.translatesAutoresizingMaskIntoConstraints = false
+
+            let popoverScroll = NSScrollView()
+            let table = NSTableView()
+            table.headerView = nil
+
+            let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("popoverActorCol"))
+            col.width = 250
+            table.addTableColumn(col)
+            table.dataSource = self
+            table.delegate = self
+            popoverScroll.documentView = table
+            popoverScroll.hasVerticalScroller = true
+            popoverScroll.translatesAutoresizingMaskIntoConstraints = false
+
+            popoverView.addSubview(searchField)
+            popoverView.addSubview(popoverScroll)
+
+            NSLayoutConstraint.activate([
+                searchField.topAnchor.constraint(equalTo: popoverView.topAnchor, constant: 8),
+                searchField.leadingAnchor.constraint(equalTo: popoverView.leadingAnchor, constant: 8),
+                searchField.trailingAnchor.constraint(equalTo: popoverView.trailingAnchor, constant: -8),
+
+                popoverScroll.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
+                popoverScroll.leadingAnchor.constraint(equalTo: popoverView.leadingAnchor, constant: 8),
+                popoverScroll.trailingAnchor.constraint(equalTo: popoverView.trailingAnchor, constant: -8),
+                popoverScroll.bottomAnchor.constraint(equalTo: popoverView.bottomAnchor, constant: -8),
+            ])
+
+            popoverVC.view = popoverView
+            let pop = NSPopover()
+            pop.contentViewController = popoverVC
+            pop.behavior = .transient
+
+            self.selectActorsPopover = pop
+            self.popoverTableView = table
+            self.popoverSearchField = searchField
+        }
+
+        popoverFilteredActors = allExistingActors.sorted {
+            if $0.mediaCount != $1.mediaCount {
+                return $0.mediaCount > $1.mediaCount
+            }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        popoverSearchField?.stringValue = ""
+        popoverTableView?.reloadData()
+        selectActorsPopover?.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+    }
+
+    @objc private func filterMediaByTypedActorsClicked(_ sender: Any?) {
+        let filterText = actorSearchComboBox.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !filterText.isEmpty {
+            let actorNames = filterText.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+
+            for name in actorNames {
+                if let found = allExistingActors.first(where: { $0.name.lowercased() == name.lowercased() }) {
+                    if !selectedSearchActors.contains(where: { $0.id == found.id }) {
+                        selectedSearchActors.append(found)
+                    }
+                } else if let actor = db.addOrGetActor(name: name) {
+                    if !selectedSearchActors.contains(where: { $0.id == actor.id }) {
+                        selectedSearchActors.append(actor)
+                    }
+                }
+            }
+            actorSearchComboBox.stringValue = ""
+            refreshAllActorsList()
+            updateSelectedSearchActorsTokens()
+        } else if !selectedSearchActors.isEmpty {
+            applySelectedSearchActorsFilter()
+        }
+    }
+
+    @objc private func addActorClicked(_ sender: Any?) {
+        let name = actorInputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let row = selectedRow, items.indices.contains(row) else { return }
+        let mediaID = items[row].id
+        db.addActorToMedia(actorName: name, mediaID: mediaID)
+        actorInputField.stringValue = ""
+        refreshAllActorsList()
+        refreshCurrentMediaActors()
+    }
+
+    @objc private func removeActorClicked(_ sender: Any?) {
+        let selectedActorRow = actorsTableView.selectedRow
+        let displayed = displayedMediaActors
+        guard selectedActorRow >= 0, displayed.indices.contains(selectedActorRow) else { return }
+        guard let row = selectedRow, items.indices.contains(row) else { return }
+        let actorID = displayed[selectedActorRow].id
+        let mediaID = items[row].id
+        db.removeActorFromMedia(actorID: actorID, mediaID: mediaID)
+        refreshCurrentMediaActors()
+    }
+
+    @objc private func assignActorRowClicked(_ sender: NSButton) {
+        let row = sender.tag
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
+        let actor = displayed[row]
+        guard !checkedItemIDs.isEmpty else { return }
+        db.assignActorToMediaIDs(actorID: actor.id, mediaIDs: Array(checkedItemIDs))
+        refreshCurrentMediaActors()
+    }
+
+    @objc private func addActorConditionRowClicked(_ sender: NSButton) {
+        let row = sender.tag
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
+        let actor = displayed[row]
+        let newCondition = "AND id IN (SELECT media_id FROM media_actors WHERE actor_id = \(actor.id))"
+        conditionExpression = newCondition
+        conditionField.stringValue = newCondition
+        reload()
+    }
+
+    @objc private func searchActorFilenameRowClicked(_ sender: NSButton) {
+        let row = sender.tag
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
+        let actor = displayed[row]
+
+        var nameVariants: Set<String> = []
+
+        func addVariants(for rawName: String) {
+            let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            let withUnderscores = trimmed.replacingOccurrences(of: " ", with: "_")
+            nameVariants.insert(withUnderscores)
+            let noSpaces = trimmed.replacingOccurrences(of: " ", with: "")
+            nameVariants.insert(noSpaces)
+        }
+
+        addVariants(for: actor.name)
+        let alts = actor.altNames.components(separatedBy: ",")
+        for alt in alts {
+            addVariants(for: alt)
+        }
+
+        let likeClauses = nameVariants.map {
+            let safeName = $0.replacingOccurrences(of: "'", with: "''")
+            return "filename LIKE '%\(safeName)%'"
+        }.joined(separator: " OR ")
+        let conditionSQL = "AND (\(likeClauses))"
+        conditionExpression = conditionSQL
+        conditionField.stringValue = conditionSQL
+        reload()
+    }
+
+    @objc private func actorNameEdited(_ sender: NSTextField) {
+        let row = sender.tag
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
+        let newName = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty else { return }
+        let actor = displayed[row]
+        db.updateActorName(actorID: actor.id, newName: newName)
+        refreshAllActorsList()
+        refreshCurrentMediaActors()
+    }
+
+    @objc private func actorAltNamesEdited(_ sender: NSTextField) {
+        let row = sender.tag
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
+        let newAltNames = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let actor = displayed[row]
+        db.updateActorAltNames(actorID: actor.id, altNames: newAltNames)
+        refreshCurrentMediaActors()
     }
 
     /// Right-hand panel: an "Up Next" column (scrollable pool of 10 thumbnails)
@@ -554,6 +1030,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     }
 
     private func reload() {
+        checkedItemIDs.removeAll()
         let result = db.loadItems(search: searchTerm, conditionExpression: conditionExpression)
         items = result.items
         lastQuerySucceeded = (result.errorMessage == nil)
@@ -571,6 +1048,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         // though the underlying list (and so "what's after it") is new —
         // selectRowIndexes above won't reliably notify in that case.
         refreshUpNext()
+        refreshCurrentMediaActors()
     }
 
     /// Shows either the result count or, if the condition field's free-form
@@ -1246,22 +1724,37 @@ extension PlayerViewController: NSSplitViewDelegate {
 
 extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
-        items.count
+        if tableView === popoverTableView {
+            return popoverFilteredActors.count
+        }
+        if tableView === actorsTableView {
+            return displayedMediaActors.count
+        }
+        return items.count
     }
 
     /// Fired by AppKit whenever the user clicks a column header (it toggles
     /// that column's descriptor between ascending/descending and puts it
     /// first in `tableView.sortDescriptors`).
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-        applySort()
+        if tableView === self.tableView {
+            applySort()
+        }
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        if let table = notification.object as? NSTableView, table === actorsTableView {
+            return
+        }
         checkAndSaveCustomCondition()
         refreshThumbnails()
+        refreshCurrentMediaActors()
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        if tableView === actorsTableView {
+            return nil
+        }
         let rowViewId = NSUserInterfaceItemIdentifier("videoRowView")
         let rowView = (tableView.makeView(withIdentifier: rowViewId, owner: self) as? CustomTableRowView) ?? CustomTableRowView()
         rowView.identifier = rowViewId
@@ -1279,8 +1772,152 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === popoverTableView {
+            guard popoverFilteredActors.indices.contains(row) else { return nil }
+            let actor = popoverFilteredActors[row]
+            let cellId = NSUserInterfaceItemIdentifier("popoverActorCell")
+            let cell: NSTableCellView
+            let checkbox: NSButton
+            if let reused = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView,
+               let cb = reused.subviews.first as? NSButton {
+                cell = reused
+                checkbox = cb
+            } else {
+                cell = NSTableCellView()
+                cell.identifier = cellId
+                checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(popoverActorCheckboxToggled(_:)))
+                checkbox.setButtonType(.switch)
+                checkbox.translatesAutoresizingMaskIntoConstraints = false
+                cell.addSubview(checkbox)
+                NSLayoutConstraint.activate([
+                    checkbox.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                    checkbox.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    checkbox.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                ])
+            }
+            checkbox.title = "\(actor.name) (\(actor.mediaCount))"
+            checkbox.tag = row
+            checkbox.state = selectedSearchActors.contains(where: { $0.id == actor.id }) ? .on : .off
+            return cell
+        }
+
+        if tableView === actorsTableView {
+            let displayed = displayedMediaActors
+            guard let identifier = tableColumn?.identifier, displayed.indices.contains(row) else { return nil }
+            let actor = displayed[row]
+
+            if identifier.rawValue == "actorName" || identifier.rawValue == "actorAltNames" || identifier.rawValue == "actorCount" {
+                let cellId = NSUserInterfaceItemIdentifier("actorCell-\(identifier.rawValue)")
+                let cell: NSTableCellView
+                if let reused = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView {
+                    cell = reused
+                } else {
+                    cell = NSTableCellView()
+                    cell.identifier = cellId
+                    let textField = NSTextField(labelWithString: "")
+                    textField.translatesAutoresizingMaskIntoConstraints = false
+                    textField.lineBreakMode = .byTruncatingTail
+                    cell.addSubview(textField)
+                    cell.textField = textField
+                    NSLayoutConstraint.activate([
+                        textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                        textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                        textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    ])
+                }
+
+                if identifier.rawValue == "actorName" {
+                    cell.textField?.stringValue = actor.name
+                    cell.textField?.isEditable = true
+                    cell.textField?.isSelectable = true
+                    cell.textField?.target = self
+                    cell.textField?.action = #selector(actorNameEdited(_:))
+                    cell.textField?.tag = row
+                } else if identifier.rawValue == "actorAltNames" {
+                    cell.textField?.stringValue = actor.altNames
+                    cell.textField?.isEditable = true
+                    cell.textField?.isSelectable = true
+                    cell.textField?.target = self
+                    cell.textField?.action = #selector(actorAltNamesEdited(_:))
+                    cell.textField?.tag = row
+                } else if identifier.rawValue == "actorCount" {
+                    cell.textField?.stringValue = String(actor.mediaCount)
+                    cell.textField?.isEditable = false
+                    cell.textField?.isSelectable = true
+                }
+                return cell
+            } else {
+                let cellId = NSUserInterfaceItemIdentifier("actorBtnCell-\(identifier.rawValue)")
+                let cell: NSTableCellView
+                let button: NSButton
+                if let reused = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView,
+                   let btn = reused.subviews.first as? NSButton {
+                    cell = reused
+                    button = btn
+                } else {
+                    cell = NSTableCellView()
+                    cell.identifier = cellId
+                    button = NSButton()
+                    button.bezelStyle = .inline
+                    button.isBordered = false
+                    button.translatesAutoresizingMaskIntoConstraints = false
+                    cell.addSubview(button)
+                    NSLayoutConstraint.activate([
+                        button.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
+                        button.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                        button.widthAnchor.constraint(equalToConstant: 24),
+                        button.heightAnchor.constraint(equalToConstant: 24),
+                    ])
+                }
+
+                button.tag = row
+                if identifier.rawValue == "actorAssign" {
+                    button.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "Assign to Checked") ?? NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
+                    button.toolTip = "Assign to Checked Media"
+                    button.target = self
+                    button.action = #selector(assignActorRowClicked(_:))
+                } else if identifier.rawValue == "actorCondition" {
+                    button.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: "Filter Media") ?? NSImage(systemSymbolName: "line.horizontal.3.decrease", accessibilityDescription: nil)
+                    button.toolTip = "Filter media by actor"
+                    button.target = self
+                    button.action = #selector(addActorConditionRowClicked(_:))
+                } else if identifier.rawValue == "actorSearch" {
+                    button.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search Filename")
+                    button.toolTip = "Search filename for actor name"
+                    button.target = self
+                    button.action = #selector(searchActorFilenameRowClicked(_:))
+                }
+                return cell
+            }
+        }
+
         guard let identifier = tableColumn?.identifier, items.indices.contains(row) else { return nil }
         let item = items[row]
+
+        if identifier.rawValue == "select" {
+            let cellId = NSUserInterfaceItemIdentifier("cell-select")
+            let cell: NSTableCellView
+            let checkbox: NSButton
+            if let reused = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView,
+               let cb = reused.subviews.first as? NSButton {
+                cell = reused
+                checkbox = cb
+            } else {
+                cell = NSTableCellView()
+                cell.identifier = cellId
+                checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(mediaRowCheckboxToggled(_:)))
+                checkbox.setButtonType(.switch)
+                checkbox.translatesAutoresizingMaskIntoConstraints = false
+                cell.addSubview(checkbox)
+                NSLayoutConstraint.activate([
+                    checkbox.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
+                    checkbox.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+            }
+            checkbox.tag = row
+            checkbox.state = checkedItemIDs.contains(item.id) ? .on : .off
+            return cell
+        }
 
         let text: String
         switch identifier.rawValue {
@@ -1340,11 +1977,47 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
         }
         return cell
     }
+
+    @objc private func popoverActorCheckboxToggled(_ sender: NSButton) {
+        let row = sender.tag
+        guard popoverFilteredActors.indices.contains(row) else { return }
+        let actor = popoverFilteredActors[row]
+        toggleActorSelection(actor)
+    }
+
+    @objc private func mediaRowCheckboxToggled(_ sender: NSButton) {
+        let row = sender.tag
+        guard items.indices.contains(row) else { return }
+        let item = items[row]
+        if sender.state == .on {
+            checkedItemIDs.insert(item.id)
+        } else {
+            checkedItemIDs.remove(item.id)
+        }
+    }
+
+    @objc private func toggleSelectAllRows() {
+        let currentLoadedIDs = Set(items.map { $0.id })
+        if currentLoadedIDs.isSubset(of: checkedItemIDs) {
+            checkedItemIDs.subtract(currentLoadedIDs)
+        } else {
+            checkedItemIDs.formUnion(currentLoadedIDs)
+        }
+        tableView.reloadData()
+    }
+
+    func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
+        if tableColumn.identifier.rawValue == "select" {
+            toggleSelectAllRows()
+        }
+    }
 }
 
 // MARK: - NSTextFieldDelegate (search & condition boxes)
 
 extension PlayerViewController: NSTextFieldDelegate {
+    private static var isDeletingInTextField = false
+
     func controlTextDidBeginEditing(_ obj: Notification) {
         if let fieldEditor = obj.userInfo?["NSFieldEditor"] as? NSTextView {
             fieldEditor.allowsUndo = true
@@ -1353,18 +2026,39 @@ extension PlayerViewController: NSTextFieldDelegate {
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         textView.allowsUndo = true
+        if commandSelector == #selector(NSResponder.deleteBackward(_:)) ||
+           commandSelector == #selector(NSResponder.deleteForward(_:)) ||
+           commandSelector == #selector(NSResponder.deleteBackwardByDecomposingPreviousCharacter(_:)) ||
+           commandSelector == #selector(NSResponder.deleteWordBackward(_:)) {
+            PlayerViewController.isDeletingInTextField = true
+        } else {
+            PlayerViewController.isDeletingInTextField = false
+        }
         return false
     }
 
+    func comboBox(_ comboBox: NSComboBox, completedString substring: String) -> String? {
+        return nil
+    }
+
     func comboBoxSelectionDidChange(_ notification: Notification) {
-        guard let comboBox = notification.object as? NSComboBox, comboBox === conditionField else { return }
-        let selectedIndex = comboBox.indexOfSelectedItem
-        guard selectedIndex >= 0, selectedIndex < comboBox.numberOfItems else { return }
-        if let selectedValue = comboBox.itemObjectValue(at: selectedIndex) as? String {
-            conditionExpression = selectedValue
-            conditionField.stringValue = selectedValue
-            hasAddedCurrentConditionToHistory = true
-            reload()
+        guard let comboBox = notification.object as? NSComboBox else { return }
+        if comboBox === conditionField {
+            let selectedIndex = comboBox.indexOfSelectedItem
+            guard selectedIndex >= 0, selectedIndex < comboBox.numberOfItems else { return }
+            if let selectedValue = comboBox.itemObjectValue(at: selectedIndex) as? String {
+                conditionExpression = selectedValue
+                conditionField.stringValue = selectedValue
+                hasAddedCurrentConditionToHistory = true
+                reload()
+            }
+        } else if comboBox === actorSearchComboBox {
+            let selectedIndex = comboBox.indexOfSelectedItem
+            guard selectedIndex >= 0, selectedIndex < comboBox.numberOfItems else { return }
+            if let selectedValue = comboBox.itemObjectValue(at: selectedIndex) as? String {
+                actorSearchComboBox.stringValue = selectedValue
+                filterMediaByTypedActorsClicked(comboBox)
+            }
         }
     }
 
@@ -1377,6 +2071,37 @@ extension PlayerViewController: NSTextFieldDelegate {
             conditionExpression = conditionField.stringValue
             hasAddedCurrentConditionToHistory = false
             reload() // a bad fragment now shows its error in statusLabel instead of just an empty table
+        } else if field === popoverSearchField {
+            let filter = popoverSearchField?.stringValue.lowercased() ?? ""
+            let sortedActors = allExistingActors.sorted {
+                if $0.mediaCount != $1.mediaCount {
+                    return $0.mediaCount > $1.mediaCount
+                }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+            if filter.isEmpty {
+                popoverFilteredActors = sortedActors
+            } else {
+                popoverFilteredActors = sortedActors.filter {
+                    $0.name.lowercased().contains(filter) || $0.altNames.lowercased().contains(filter)
+                }
+            }
+            popoverTableView?.reloadData()
+        } else if field === actorSearchComboBox || field === actorInputField {
+            defer { PlayerViewController.isDeletingInTextField = false }
+            if !PlayerViewController.isDeletingInTextField,
+               let editor = field.currentEditor() as? NSTextView {
+                let text = field.stringValue
+                let selRange = editor.selectedRange()
+                if selRange.location == text.count && selRange.length == 0 && !text.isEmpty {
+                    let actorNames = allExistingActors.map { $0.name }
+                    if let match = actorNames.first(where: { $0.lowercased().hasPrefix(text.lowercased()) }) {
+                        field.stringValue = match
+                        let newSelRange = NSRange(location: text.count, length: match.count - text.count)
+                        editor.setSelectedRange(newSelRange)
+                    }
+                }
+            }
         }
     }
 }
