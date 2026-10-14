@@ -2022,6 +2022,15 @@ extension PlayerViewController: NSTextFieldDelegate {
         return false
     }
 
+    func comboBox(_ comboBox: NSComboBox, completedString substring: String) -> String? {
+        guard comboBox === actorSearchComboBox || comboBox === actorInputField else { return nil }
+        let actorNames = allExistingActors.map { $0.name }
+        if let match = actorNames.first(where: { $0.localizedCaseInsensitiveStarts(with: substring) }) {
+            return match
+        }
+        return nil
+    }
+
     func comboBoxSelectionDidChange(_ notification: Notification) {
         guard let comboBox = notification.object as? NSComboBox else { return }
         if comboBox === conditionField {
