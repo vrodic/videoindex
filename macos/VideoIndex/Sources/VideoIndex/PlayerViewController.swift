@@ -2011,6 +2011,8 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
 // MARK: - NSTextFieldDelegate (search & condition boxes)
 
 extension PlayerViewController: NSTextFieldDelegate {
+    private static var isDeletingInTextField = false
+
     func controlTextDidBeginEditing(_ obj: Notification) {
         if let fieldEditor = obj.userInfo?["NSFieldEditor"] as? NSTextView {
             fieldEditor.allowsUndo = true
@@ -2019,15 +2021,18 @@ extension PlayerViewController: NSTextFieldDelegate {
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         textView.allowsUndo = true
+        if commandSelector == #selector(NSResponder.deleteBackward(_:)) ||
+           commandSelector == #selector(NSResponder.deleteForward(_:)) ||
+           commandSelector == #selector(NSResponder.deleteBackwardByDecomposingPreviousCharacter(_:)) ||
+           commandSelector == #selector(NSResponder.deleteWordBackward(_:)) {
+            PlayerViewController.isDeletingInTextField = true
+        } else {
+            PlayerViewController.isDeletingInTextField = false
+        }
         return false
     }
 
     func comboBox(_ comboBox: NSComboBox, completedString substring: String) -> String? {
-        guard comboBox === actorSearchComboBox || comboBox === actorInputField else { return nil }
-        let actorNames = allExistingActors.map { $0.name }
-        if let match = actorNames.first(where: { $0.lowercased().hasPrefix(substring.lowercased()) }) {
-            return match
-        }
         return nil
     }
 
@@ -2071,6 +2076,21 @@ extension PlayerViewController: NSTextFieldDelegate {
                 }
             }
             popoverTableView?.reloadData()
+        } else if field === actorSearchComboBox || field === actorInputField {
+            defer { PlayerViewController.isDeletingInTextField = false }
+            if !PlayerViewController.isDeletingInTextField,
+               let editor = field.currentEditor() as? NSTextView {
+                let text = field.stringValue
+                let selRange = editor.selectedRange()
+                if selRange.location == text.count && selRange.length == 0 && !text.isEmpty {
+                    let actorNames = allExistingActors.map { $0.name }
+                    if let match = actorNames.first(where: { $0.lowercased().hasPrefix(text.lowercased()) }) {
+                        field.stringValue = match
+                        let newSelRange = NSRange(location: text.count, length: match.count - text.count)
+                        editor.setSelectedRange(newSelRange)
+                    }
+                }
+            }
         }
     }
 }
