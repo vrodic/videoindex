@@ -672,7 +672,12 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             self.popoverSearchField = searchField
         }
 
-        popoverFilteredActors = allExistingActors
+        popoverFilteredActors = allExistingActors.sorted {
+            if $0.mediaCount != $1.mediaCount {
+                return $0.mediaCount > $1.mediaCount
+            }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
         popoverSearchField?.stringValue = ""
         popoverTableView?.reloadData()
         selectActorsPopover?.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
@@ -1790,7 +1795,7 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
                     checkbox.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
                 ])
             }
-            checkbox.title = actor.name
+            checkbox.title = "\(actor.name) (\(actor.mediaCount))"
             checkbox.tag = row
             checkbox.state = selectedSearchActors.contains(where: { $0.id == actor.id }) ? .on : .off
             return cell
@@ -2068,10 +2073,16 @@ extension PlayerViewController: NSTextFieldDelegate {
             reload() // a bad fragment now shows its error in statusLabel instead of just an empty table
         } else if field === popoverSearchField {
             let filter = popoverSearchField?.stringValue.lowercased() ?? ""
+            let sortedActors = allExistingActors.sorted {
+                if $0.mediaCount != $1.mediaCount {
+                    return $0.mediaCount > $1.mediaCount
+                }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
             if filter.isEmpty {
-                popoverFilteredActors = allExistingActors
+                popoverFilteredActors = sortedActors
             } else {
-                popoverFilteredActors = allExistingActors.filter {
+                popoverFilteredActors = sortedActors.filter {
                     $0.name.lowercased().contains(filter) || $0.altNames.lowercased().contains(filter)
                 }
             }
