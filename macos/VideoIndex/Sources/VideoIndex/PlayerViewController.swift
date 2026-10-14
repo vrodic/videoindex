@@ -515,13 +515,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     }
 
     private var displayedMediaActors: [Database.Actor] {
-        let filterText = actorSearchComboBox.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if filterText.isEmpty {
-            return currentMediaActors
-        }
-        return currentMediaActors.filter {
-            $0.name.lowercased().contains(filterText) || $0.altNames.lowercased().contains(filterText)
-        }
+        return currentMediaActors
     }
 
     private func refreshCurrentMediaActors() {
@@ -2030,8 +2024,6 @@ extension PlayerViewController: NSTextFieldDelegate {
             conditionExpression = conditionField.stringValue
             hasAddedCurrentConditionToHistory = false
             reload() // a bad fragment now shows its error in statusLabel instead of just an empty table
-        } else if field === actorSearchComboBox {
-            actorsTableView.reloadData()
         } else if field === popoverSearchField {
             let filter = popoverSearchField?.stringValue.lowercased() ?? ""
             if filter.isEmpty {
