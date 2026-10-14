@@ -77,6 +77,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
     // Actors section properties
     private var currentMediaActors: [Database.Actor] = []
+    private var filteredMediaActors: [Database.Actor] = []
     private var allExistingActors: [Database.Actor] = []
     private let actorsContainerView = NSView()
     private let actorsTableView = NSTableView()
@@ -84,9 +85,8 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     private let actorInputField = NSComboBox()
     private let addActorButton = NSButton(title: "Add Actor", target: nil, action: nil)
     private let removeActorButton = NSButton(title: "Remove Actor", target: nil, action: nil)
-    private let assignActorToCheckedButton = NSButton(title: "Assign to Checked", target: nil, action: nil)
-    private let addActorConditionButton = NSButton(title: "Add Condition", target: nil, action: nil)
-    private let searchActorFilenameButton = NSButton(title: "Search Filename", target: nil, action: nil)
+    private let actorFilterField = NSTextField()
+    private let filterMediaByActorsButton = NSButton(title: "Filter Media", target: nil, action: nil)
 
     private var wordCloudWindowController: WordCloudWindowController?
     private var dashboardWindowController: DashboardWindowController?
@@ -406,7 +406,17 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         actorsScrollView.hasVerticalScroller = true
         actorsScrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        actorInputField.placeholderString = "Enter actor name… (Press Enter to add)"
+        actorFilterField.placeholderString = "Search actors or type comma-separated actors to filter media…"
+        actorFilterField.delegate = self
+        actorFilterField.allowsEditingTextAttributes = true
+        actorFilterField.translatesAutoresizingMaskIntoConstraints = false
+
+        filterMediaByActorsButton.bezelStyle = .rounded
+        filterMediaByActorsButton.target = self
+        filterMediaByActorsButton.action = #selector(filterMediaByTypedActorsClicked(_:))
+        filterMediaByActorsButton.translatesAutoresizingMaskIntoConstraints = false
+
+        actorInputField.placeholderString = "Add actor to selected media… (Press Enter)"
         actorInputField.hasVerticalScroller = true
         actorInputField.completes = true
         actorInputField.delegate = self
@@ -424,27 +434,37 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         removeActorButton.action = #selector(removeActorClicked(_:))
         removeActorButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let topRowStack = NSStackView(views: [actorInputField, addActorButton, removeActorButton])
-        topRowStack.orientation = .horizontal
-        topRowStack.spacing = 6
-        topRowStack.translatesAutoresizingMaskIntoConstraints = false
+        let filterRowStack = NSStackView(views: [actorFilterField, filterMediaByActorsButton])
+        filterRowStack.orientation = .horizontal
+        filterRowStack.spacing = 6
+        filterRowStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let addRowStack = NSStackView(views: [actorInputField, addActorButton, removeActorButton])
+        addRowStack.orientation = .horizontal
+        addRowStack.spacing = 6
+        addRowStack.translatesAutoresizingMaskIntoConstraints = false
 
         actorsContainerView.addSubview(headerLabel)
+        actorsContainerView.addSubview(filterRowStack)
         actorsContainerView.addSubview(actorsScrollView)
-        actorsContainerView.addSubview(topRowStack)
+        actorsContainerView.addSubview(addRowStack)
 
         NSLayoutConstraint.activate([
             headerLabel.topAnchor.constraint(equalTo: actorsContainerView.topAnchor),
             headerLabel.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
 
-            actorsScrollView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 4),
+            filterRowStack.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 4),
+            filterRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
+            filterRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
+
+            actorsScrollView.topAnchor.constraint(equalTo: filterRowStack.bottomAnchor, constant: 4),
             actorsScrollView.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
             actorsScrollView.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
 
-            topRowStack.topAnchor.constraint(equalTo: actorsScrollView.bottomAnchor, constant: 6),
-            topRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
-            topRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
-            topRowStack.bottomAnchor.constraint(equalTo: actorsContainerView.bottomAnchor),
+            addRowStack.topAnchor.constraint(equalTo: actorsScrollView.bottomAnchor, constant: 6),
+            addRowStack.leadingAnchor.constraint(equalTo: actorsContainerView.leadingAnchor),
+            addRowStack.trailingAnchor.constraint(equalTo: actorsContainerView.trailingAnchor),
+            addRowStack.bottomAnchor.constraint(equalTo: actorsContainerView.bottomAnchor),
 
             actorInputField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
         ])
@@ -458,6 +478,16 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         actorInputField.addItems(withObjectValues: allExistingActors.map { $0.name })
     }
 
+    private var displayedMediaActors: [Database.Actor] {
+        let filterText = actorFilterField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if filterText.isEmpty {
+            return currentMediaActors
+        }
+        return currentMediaActors.filter {
+            $0.name.lowercased().contains(filterText) || $0.altNames.lowercased().contains(filterText)
+        }
+    }
+
     private func refreshCurrentMediaActors() {
         if let row = selectedRow, items.indices.contains(row) {
             let mediaID = items[row].id
@@ -466,6 +496,21 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             currentMediaActors = []
         }
         actorsTableView.reloadData()
+    }
+
+    @objc private func filterMediaByTypedActorsClicked(_ sender: Any?) {
+        let filterText = actorFilterField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceText = filterText.isEmpty ? actorInputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) : filterText
+        let actorNames = sourceText.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+
+        guard !actorNames.isEmpty else { return }
+
+        let escapedNames = actorNames.map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }.joined(separator: ", ")
+        let sql = "AND id IN (SELECT ma.media_id FROM media_actors ma JOIN actors a ON ma.actor_id = a.id WHERE lower(a.name) IN (\(escapedNames.lowercased())) GROUP BY ma.media_id HAVING COUNT(DISTINCT ma.actor_id) = \(actorNames.count))"
+
+        conditionExpression = sql
+        conditionField.stringValue = sql
+        reload()
     }
 
     @objc private func addActorClicked(_ sender: Any?) {
@@ -480,9 +525,10 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
     @objc private func removeActorClicked(_ sender: Any?) {
         let selectedActorRow = actorsTableView.selectedRow
-        guard selectedActorRow >= 0, currentMediaActors.indices.contains(selectedActorRow) else { return }
+        let displayed = displayedMediaActors
+        guard selectedActorRow >= 0, displayed.indices.contains(selectedActorRow) else { return }
         guard let row = selectedRow, items.indices.contains(row) else { return }
-        let actorID = currentMediaActors[selectedActorRow].id
+        let actorID = displayed[selectedActorRow].id
         let mediaID = items[row].id
         db.removeActorFromMedia(actorID: actorID, mediaID: mediaID)
         refreshCurrentMediaActors()
@@ -490,8 +536,9 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
     @objc private func assignActorRowClicked(_ sender: NSButton) {
         let row = sender.tag
-        guard currentMediaActors.indices.contains(row) else { return }
-        let actor = currentMediaActors[row]
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
+        let actor = displayed[row]
         guard !checkedItemIDs.isEmpty else { return }
         db.assignActorToMediaIDs(actorID: actor.id, mediaIDs: Array(checkedItemIDs))
         refreshCurrentMediaActors()
@@ -499,8 +546,9 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
     @objc private func addActorConditionRowClicked(_ sender: NSButton) {
         let row = sender.tag
-        guard currentMediaActors.indices.contains(row) else { return }
-        let actor = currentMediaActors[row]
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
+        let actor = displayed[row]
         let newCondition = "AND id IN (SELECT media_id FROM media_actors WHERE actor_id = \(actor.id))"
         conditionExpression = newCondition
         conditionField.stringValue = newCondition
@@ -509,8 +557,9 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
     @objc private func searchActorFilenameRowClicked(_ sender: NSButton) {
         let row = sender.tag
-        guard currentMediaActors.indices.contains(row) else { return }
-        let actor = currentMediaActors[row]
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
+        let actor = displayed[row]
 
         var nameVariants: Set<String> = []
 
@@ -541,22 +590,24 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
     @objc private func actorNameEdited(_ sender: NSTextField) {
         let row = sender.tag
-        guard currentMediaActors.indices.contains(row) else { return }
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
         let newName = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !newName.isEmpty else { return }
-        let actor = currentMediaActors[row]
+        let actor = displayed[row]
         db.updateActorName(actorID: actor.id, newName: newName)
-        currentMediaActors[row].name = newName
         refreshAllActorsList()
+        refreshCurrentMediaActors()
     }
 
     @objc private func actorAltNamesEdited(_ sender: NSTextField) {
         let row = sender.tag
-        guard currentMediaActors.indices.contains(row) else { return }
+        let displayed = displayedMediaActors
+        guard displayed.indices.contains(row) else { return }
         let newAltNames = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let actor = currentMediaActors[row]
+        let actor = displayed[row]
         db.updateActorAltNames(actorID: actor.id, altNames: newAltNames)
-        currentMediaActors[row].altNames = newAltNames
+        refreshCurrentMediaActors()
     }
 
     /// Right-hand panel: an "Up Next" column (scrollable pool of 10 thumbnails)
@@ -1480,7 +1531,7 @@ extension PlayerViewController: NSSplitViewDelegate {
 extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
         if tableView === actorsTableView {
-            return currentMediaActors.count
+            return displayedMediaActors.count
         }
         return items.count
     }
@@ -1525,8 +1576,9 @@ extension PlayerViewController: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         if tableView === actorsTableView {
-            guard let identifier = tableColumn?.identifier, currentMediaActors.indices.contains(row) else { return nil }
-            let actor = currentMediaActors[row]
+            let displayed = displayedMediaActors
+            guard let identifier = tableColumn?.identifier, displayed.indices.contains(row) else { return nil }
+            let actor = displayed[row]
 
             if identifier.rawValue == "actorName" || identifier.rawValue == "actorAltNames" || identifier.rawValue == "actorCount" {
                 let cellId = NSUserInterfaceItemIdentifier("actorCell-\(identifier.rawValue)")
@@ -1763,6 +1815,8 @@ extension PlayerViewController: NSTextFieldDelegate {
             conditionExpression = conditionField.stringValue
             hasAddedCurrentConditionToHistory = false
             reload() // a bad fragment now shows its error in statusLabel instead of just an empty table
+        } else if field === actorFilterField {
+            actorsTableView.reloadData()
         }
     }
 }
