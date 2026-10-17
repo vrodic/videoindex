@@ -1677,6 +1677,17 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = args
+        process.terminationHandler = { [weak self] _ in
+            DispatchQueue.main.async {
+                NSApp.activate(ignoringOtherApps: true)
+                if let window = self?.view.window ?? NSApp.mainWindow ?? NSApp.windows.first {
+                    window.makeKeyAndOrderFront(nil)
+                    if let self {
+                        window.makeFirstResponder(self.tableView)
+                    }
+                }
+            }
+        }
         try? process.run()
 
         // The database's `viewed_time = datetime('now')` (in Database.updateViewCount)
