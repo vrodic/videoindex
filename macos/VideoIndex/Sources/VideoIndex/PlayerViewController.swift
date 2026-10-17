@@ -119,6 +119,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     private let thumbnailCache = NSCache<NSString, NSImage>()
     private var didSetInitialSplitPosition = false
 
+    private var searchDebounceTimer: Timer?
     private var thumbnailGenerationTask: Task<Void, Never>?
     private var sessionPlayedIDs: Set<Int> = []
     private var missingFileIDs: Set<Int> = []
@@ -166,16 +167,9 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         }
     }
 
-    private func getOrLoadThumbnail(id: Int, percent: Int) -> NSImage? {
+    private func getMemoryThumbnail(id: Int, percent: Int) -> NSImage? {
         let key = cacheKey(id: id, percent: percent)
-        if let cached = thumbnailCache.object(forKey: key) {
-            return cached
-        }
-        if let diskImage = loadDiskThumbnail(id: id, percent: percent) {
-            thumbnailCache.setObject(diskImage, forKey: key)
-            return diskImage
-        }
-        return nil
+        return thumbnailCache.object(forKey: key)
     }
 
     private func markMissingFile(id: Int) {
@@ -289,6 +283,8 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         searchField.placeholderString = "Search filename…"
         searchField.delegate = self
         searchField.allowsEditingTextAttributes = true
+        searchField.target = self
+        searchField.action = #selector(searchFieldSubmitted(_:))
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
         wordCloudButton.bezelStyle = .rounded
@@ -1169,13 +1165,11 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         previewLabel.stringValue = selectedItem.filename
 
         // Apply instant cached images to Preview and Up Next
-        var filmstripPercentsToLoad: [Int] = []
         for percent in previewPercentages {
-            if let cached = getOrLoadThumbnail(id: selectedItem.id, percent: percent) {
+            if let cached = getMemoryThumbnail(id: selectedItem.id, percent: percent) {
                 previewImageViews[percent]?.image = cached
             } else {
                 previewImageViews[percent]?.image = nil
-                filmstripPercentsToLoad.append(percent)
             }
         }
 
@@ -1189,7 +1183,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
                 upNextAssignedItemIDs[slot] = item.id
                 upNextImageViews[slot].toolTip = item.filename
                 upNextImageViews[slot].isHidden = false
-                if let cached = getOrLoadThumbnail(id: item.id, percent: upNextPercent) {
+                if let cached = getMemoryThumbnail(id: item.id, percent: upNextPercent) {
                     upNextImageViews[slot].image = cached
                 } else {
                     upNextImageViews[slot].image = nil
@@ -1202,79 +1196,114 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             }
         }
 
-        thumbnailGenerationTask = Task { [weak self] in
+        // Capture state snapshots for background thumbnail loading & generation
+        let captureSelectedID = selectedItem.id
+        let captureSelectedFullPath = selectedItem.fullPath(root: rootDir)
+        let captureUpNextItems: [(id: Int, fullPath: String)] = visibleUpNextRows.compactMap {
+            items.indices.contains($0) ? (id: items[$0].id, fullPath: items[$0].fullPath(root: rootDir)) : nil
+        }
+        let captureNextItem: (id: Int, fullPath: String)? = items.indices.contains(selectedIndex + 1)
+            ? (id: items[selectedIndex + 1].id, fullPath: items[selectedIndex + 1].fullPath(root: rootDir))
+            : nil
+        let captureSaveToDisk = saveThumbnailsToDisk
+
+        thumbnailGenerationTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
+
+            // 300ms Debounce Delay for thumbnail loading & generation
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            if Task.isCancelled { return }
+
             var pendingDiskSaves: [(image: NSImage, id: Int, percent: Int)] = []
 
-            // 1. Generate preview thumbnails for the SELECTED video sequentially in order
-            if !filmstripPercentsToLoad.isEmpty {
-                let fullPath = selectedItem.fullPath(root: self.rootDir)
-                if !FileManager.default.fileExists(atPath: fullPath) {
-                    await MainActor.run {
-                        self.markMissingFile(id: selectedItem.id)
-                    }
-                } else {
-                    let url = URL(fileURLWithPath: fullPath)
-                    let asset = AVURLAsset(url: url)
-                    if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
-                        let generator = AVAssetImageGenerator(asset: asset)
-                        generator.appliesPreferredTrackTransform = true
-                        generator.requestedTimeToleranceBefore = .zero
-                        generator.requestedTimeToleranceAfter = .zero
+            // 1. Generate/load preview thumbnails for the SELECTED video sequentially in order
+            let fullPath = captureSelectedFullPath
+            if !FileManager.default.fileExists(atPath: fullPath) {
+                await MainActor.run {
+                    self.markMissingFile(id: captureSelectedID)
+                }
+            } else {
+                let url = URL(fileURLWithPath: fullPath)
+                let asset = AVURLAsset(url: url)
+                var generator: AVAssetImageGenerator?
+                var durationSeconds: Double?
 
-                        for percent in filmstripPercentsToLoad {
-                            if Task.isCancelled { return }
-                            let key = self.cacheKey(id: selectedItem.id, percent: percent)
-                            if self.thumbnailCache.object(forKey: key) != nil { continue }
-                            if let diskImage = self.loadDiskThumbnail(id: selectedItem.id, percent: percent) {
-                                self.thumbnailCache.setObject(diskImage, forKey: key)
-                                await MainActor.run {
-                                    guard let currentRow = self.selectedRow,
-                                          self.items.indices.contains(currentRow),
-                                          self.items[currentRow].id == selectedItem.id else { return }
-                                    self.previewImageViews[percent]?.image = diskImage
-                                }
-                                continue
+                for percent in self.previewPercentages {
+                    if Task.isCancelled { return }
+                    let key = self.cacheKey(id: captureSelectedID, percent: percent)
+                    if self.thumbnailCache.object(forKey: key) != nil { continue }
+
+                    if let diskImage = self.loadDiskThumbnail(id: captureSelectedID, percent: percent) {
+                        self.thumbnailCache.setObject(diskImage, forKey: key)
+                        await MainActor.run {
+                            if let currentRow = self.selectedRow,
+                               self.items.indices.contains(currentRow),
+                               self.items[currentRow].id == captureSelectedID {
+                                self.previewImageViews[percent]?.image = diskImage
                             }
+                        }
+                        continue
+                    }
 
-                            let seconds = durationSeconds * Double(percent) / 100
-                            if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
-                                if Task.isCancelled { return }
-                                pendingDiskSaves.append((image: image, id: selectedItem.id, percent: percent))
-                                self.thumbnailCache.setObject(image, forKey: key)
-                                await MainActor.run {
-                                    guard let currentRow = self.selectedRow,
-                                          self.items.indices.contains(currentRow),
-                                          self.items[currentRow].id == selectedItem.id else { return }
-                                    self.previewImageViews[percent]?.image = image
-                                }
+                    if durationSeconds == nil {
+                        durationSeconds = await self.loadDuration(asset: asset, url: url)
+                        if let dur = durationSeconds, dur > 0 {
+                            let gen = AVAssetImageGenerator(asset: asset)
+                            gen.appliesPreferredTrackTransform = true
+                            gen.requestedTimeToleranceBefore = .zero
+                            gen.requestedTimeToleranceAfter = .zero
+                            generator = gen
+                        }
+                    }
+
+                    guard let dur = durationSeconds, let gen = generator else { break }
+                    let seconds = dur * Double(percent) / 100
+                    if let image = await self.generateFrame(generator: gen, url: url, atSeconds: seconds) {
+                        if Task.isCancelled { return }
+                        pendingDiskSaves.append((image: image, id: captureSelectedID, percent: percent))
+                        self.thumbnailCache.setObject(image, forKey: key)
+                        await MainActor.run {
+                            if let currentRow = self.selectedRow,
+                               self.items.indices.contains(currentRow),
+                               self.items[currentRow].id == captureSelectedID {
+                                self.previewImageViews[percent]?.image = image
                             }
                         }
                     }
                 }
             }
 
-
-            // 2. Generate UP NEXT thumbnails sequentially in order for up to 10 slots
-            for slot in 0..<visibleUpNextRows.count {
+            // 2. Generate/load UP NEXT thumbnails sequentially in order for up to 10 slots
+            for slot in 0..<captureUpNextItems.count {
                 if Task.isCancelled { return }
-                let itemIndex = visibleUpNextRows[slot]
-                guard self.items.indices.contains(itemIndex) else { continue }
-                let item = self.items[itemIndex]
+                let upNextItem = captureUpNextItems[slot]
+                let key = self.cacheKey(id: upNextItem.id, percent: self.upNextPercent)
 
-                if let cached = self.getOrLoadThumbnail(id: item.id, percent: self.upNextPercent) {
+                if let cached = self.thumbnailCache.object(forKey: key) {
                     await MainActor.run {
-                        guard slot < self.upNextAssignedItemIDs.count,
-                              self.upNextAssignedItemIDs[slot] == item.id else { return }
-                        self.upNextImageViews[slot].image = cached
+                        if slot < self.upNextAssignedItemIDs.count,
+                           self.upNextAssignedItemIDs[slot] == upNextItem.id {
+                            self.upNextImageViews[slot].image = cached
+                        }
                     }
                     continue
                 }
 
-                let fullPath = item.fullPath(root: self.rootDir)
+                if let diskImage = self.loadDiskThumbnail(id: upNextItem.id, percent: self.upNextPercent) {
+                    self.thumbnailCache.setObject(diskImage, forKey: key)
+                    await MainActor.run {
+                        if slot < self.upNextAssignedItemIDs.count,
+                           self.upNextAssignedItemIDs[slot] == upNextItem.id {
+                            self.upNextImageViews[slot].image = diskImage
+                        }
+                    }
+                    continue
+                }
+
+                let fullPath = upNextItem.fullPath
                 if !FileManager.default.fileExists(atPath: fullPath) {
                     await MainActor.run {
-                        self.markMissingFile(id: item.id)
+                        self.markMissingFile(id: upNextItem.id)
                     }
                     continue
                 }
@@ -1292,22 +1321,21 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
                 let seconds = durationSeconds * Double(self.upNextPercent) / 100
                 if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
                     if Task.isCancelled { return }
-                    pendingDiskSaves.append((image: image, id: item.id, percent: self.upNextPercent))
-                    self.thumbnailCache.setObject(image, forKey: self.cacheKey(id: item.id, percent: self.upNextPercent))
+                    pendingDiskSaves.append((image: image, id: upNextItem.id, percent: self.upNextPercent))
+                    self.thumbnailCache.setObject(image, forKey: key)
                     await MainActor.run {
-                        guard slot < self.upNextAssignedItemIDs.count,
-                              self.upNextAssignedItemIDs[slot] == item.id else { return }
-                        self.upNextImageViews[slot].image = image
+                        if slot < self.upNextAssignedItemIDs.count,
+                           self.upNextAssignedItemIDs[slot] == upNextItem.id {
+                            self.upNextImageViews[slot].image = image
+                        }
                     }
                 }
             }
 
-            // 3. Pre-generate full set of filmstrip thumbnails in advance for the IMMEDIATELY NEXT video (AFTER Up Next completes)
-            let nextIndex = selectedIndex + 1
-            if self.items.indices.contains(nextIndex) {
+            // 3. Pre-generate full set of filmstrip thumbnails in advance for the IMMEDIATELY NEXT video
+            if let nextItem = captureNextItem {
                 if Task.isCancelled { return }
-                let nextItem = self.items[nextIndex]
-                let fullPath = nextItem.fullPath(root: self.rootDir)
+                let fullPath = nextItem.fullPath
                 if !FileManager.default.fileExists(atPath: fullPath) {
                     await MainActor.run {
                         self.markMissingFile(id: nextItem.id)
@@ -1315,36 +1343,47 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
                 } else {
                     let url = URL(fileURLWithPath: fullPath)
                     let asset = AVURLAsset(url: url)
-                    if let durationSeconds = await self.loadDuration(asset: asset, url: url), !Task.isCancelled {
-                        let generator = AVAssetImageGenerator(asset: asset)
-                        generator.appliesPreferredTrackTransform = true
-                        generator.requestedTimeToleranceBefore = .zero
-                        generator.requestedTimeToleranceAfter = .zero
+                    var generator: AVAssetImageGenerator?
+                    var durationSeconds: Double?
 
-                        for percent in self.previewPercentages {
+                    for percent in self.previewPercentages {
+                        if Task.isCancelled { return }
+                        let key = self.cacheKey(id: nextItem.id, percent: percent)
+                        if self.thumbnailCache.object(forKey: key) != nil { continue }
+
+                        if let diskImage = self.loadDiskThumbnail(id: nextItem.id, percent: percent) {
+                            self.thumbnailCache.setObject(diskImage, forKey: key)
+                            continue
+                        }
+
+                        if durationSeconds == nil {
+                            durationSeconds = await self.loadDuration(asset: asset, url: url)
+                            if let dur = durationSeconds, dur > 0 {
+                                let gen = AVAssetImageGenerator(asset: asset)
+                                gen.appliesPreferredTrackTransform = true
+                                gen.requestedTimeToleranceBefore = .zero
+                                gen.requestedTimeToleranceAfter = .zero
+                                generator = gen
+                            }
+                        }
+
+                        guard let dur = durationSeconds, let gen = generator else { break }
+                        let seconds = dur * Double(percent) / 100
+                        if let image = await self.generateFrame(generator: gen, url: url, atSeconds: seconds) {
                             if Task.isCancelled { return }
-                            let key = self.cacheKey(id: nextItem.id, percent: percent)
-                            if self.thumbnailCache.object(forKey: key) != nil { continue }
-                            if let diskImage = self.loadDiskThumbnail(id: nextItem.id, percent: percent) {
-                                self.thumbnailCache.setObject(diskImage, forKey: key)
-                                continue
-                            }
-
-                            let seconds = durationSeconds * Double(percent) / 100
-                            if let image = await self.generateFrame(generator: generator, url: url, atSeconds: seconds) {
-                                if Task.isCancelled { return }
-                                pendingDiskSaves.append((image: image, id: nextItem.id, percent: percent))
-                                self.thumbnailCache.setObject(image, forKey: key)
-                            }
+                            pendingDiskSaves.append((image: image, id: nextItem.id, percent: percent))
+                            self.thumbnailCache.setObject(image, forKey: key)
                         }
                     }
                 }
             }
 
             // Save all generated thumbnails to disk AFTER generation finishes
-            for save in pendingDiskSaves {
-                if Task.isCancelled { return }
-                self.saveDiskThumbnail(save.image, id: save.id, percent: save.percent)
+            if captureSaveToDisk {
+                for save in pendingDiskSaves {
+                    if Task.isCancelled { return }
+                    self.saveDiskThumbnail(save.image, id: save.id, percent: save.percent)
+                }
             }
         }
     }
@@ -2062,11 +2101,23 @@ extension PlayerViewController: NSTextFieldDelegate {
         }
     }
 
+    @objc private func searchFieldSubmitted(_ sender: Any?) {
+        searchDebounceTimer?.invalidate()
+        if searchTerm != searchField.stringValue {
+            searchTerm = searchField.stringValue
+            reload()
+        }
+    }
+
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSControl else { return }
         if field === searchField {
-            searchTerm = searchField.stringValue
-            reload()
+            searchDebounceTimer?.invalidate()
+            searchDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+                guard let self else { return }
+                self.searchTerm = self.searchField.stringValue
+                self.reload()
+            }
         } else if field === conditionField {
             conditionExpression = conditionField.stringValue
             hasAddedCurrentConditionToHistory = false
