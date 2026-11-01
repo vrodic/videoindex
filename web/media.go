@@ -111,6 +111,7 @@ func (m *MediaService) ServeDirect(w http.ResponseWriter, r *http.Request, rel s
 	if ct := directContentType(p); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	http.ServeContent(w, r, filepath.Base(p), st.ModTime(), f)
 }
 

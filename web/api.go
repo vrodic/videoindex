@@ -230,8 +230,7 @@ func (a *App) handleThumb(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	// ids are AUTOINCREMENT, never reused, so a thumbnail never changes.
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	w.Header().Set("Cache-Control", "no-store")
 	http.ServeFile(w, r, p)
 }
 
