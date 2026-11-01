@@ -16,7 +16,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
 
     // UI Controls
     private let scopeControl = NSSegmentedControl(labels: ["All Media", "Current Filter"], trackingMode: .selectOne, target: nil, action: nil)
-    private let treemapMetricControl = NSSegmentedControl(labels: ["By Likes", "By Resolutions", "By Durations", "By Views", "By Actors"], trackingMode: .selectOne, target: nil, action: nil)
+    private let treemapMetricControl = NSSegmentedControl(labels: ["By Likes", "By Resolutions", "By Durations", "By Views", "By Actors", "By Last Viewed"], trackingMode: .selectOne, target: nil, action: nil)
 
     private let overviewCardsStack = NSStackView()
     private let treemapTitleLabel = NSTextField(labelWithString: "Squarified Treemap Visualization")
@@ -31,12 +31,14 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
     private let durationsTableView = NSTableView()
     private let viewsTableView = NSTableView()
     private let actorsTableView = NSTableView()
+    private let lastViewedTableView = NSTableView()
 
     private var likesStats: [GroupStat] = []
     private var resolutionsStats: [GroupStat] = []
     private var durationsStats: [GroupStat] = []
     private var viewsStats: [GroupStat] = []
     private var actorsStats: [GroupStat] = []
+    private var lastViewedStats: [GroupStat] = []
 
     struct GroupStat {
         let key: String
@@ -140,12 +142,14 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         setupTable(resolutionsTableView, columns: [("res", "Resolution Class", 140), ("count", "Videos", 80), ("size", "Total Storage", 110), ("pct", "% Videos", 90)])
         setupTable(durationsTableView, columns: [("dur", "Duration Range", 140), ("count", "Videos", 80), ("total_dur", "Total Duration", 120), ("size", "Total Storage", 110), ("pct", "% Videos", 90)])
         setupTable(viewsTableView, columns: [("views", "View Tier", 140), ("count", "Videos", 80), ("size", "Total Storage", 110), ("pct", "% Videos", 90)])
+        setupTable(lastViewedTableView, columns: [("lastv", "Last Viewed", 140), ("count", "Videos", 80), ("size", "Total Storage", 110), ("pct", "% Videos", 90)])
 
         let likesBox = makeSectionBox(title: "File Sizes & Storage by Likes", view: likesTableView, height: 180)
         let actorsBox = makeSectionBox(title: "Actors Breakdown", view: actorsTableView, height: 180)
         let resBox = makeSectionBox(title: "Resolutions Breakdown", view: resolutionsTableView, height: 150)
         let durBox = makeSectionBox(title: "Durations Breakdown", view: durationsTableView, height: 170)
         let viewsBox = makeSectionBox(title: "View Counts Breakdown", view: viewsTableView, height: 140)
+        let lastViewedBox = makeSectionBox(title: "Last Viewed Breakdown", view: lastViewedTableView, height: 190)
 
         // Content layout container
         let stackView = NSStackView(views: [
@@ -157,7 +161,8 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             actorsBox,
             resBox,
             durBox,
-            viewsBox
+            viewsBox,
+            lastViewedBox
         ])
         stackView.orientation = .vertical
         stackView.alignment = .leading
@@ -203,6 +208,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             resBox.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             durBox.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             viewsBox.widthAnchor.constraint(equalTo: stackView.widthAnchor),
+            lastViewedBox.widthAnchor.constraint(equalTo: stackView.widthAnchor),
         ])
     }
 
@@ -321,6 +327,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         resolutionsTableView.reloadData()
         durationsTableView.reloadData()
         viewsTableView.reloadData()
+        lastViewedTableView.reloadData()
     }
 
     private func computeBreakdowns(records: [Database.DashboardRecord], totalBytes: Int64, totalCount: Int) {
@@ -508,6 +515,42 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             guard let entry = viewsMap[key] else { return nil }
             return GroupStat(key: key, title: entry.title, count: entry.count, totalSizeBytes: entry.bytes, totalDurationSec: entry.dur, color: entry.color)
         }
+
+        // Last Viewed Breakdown
+        var lastViewedMap: [String: (title: String, count: Int, bytes: Int64, dur: Double, color: NSColor)] = [
+            "day": ("Last 24 hours", 0, 0, 0, .systemGreen),
+            "week": ("Last 7 days", 0, 0, 0, .systemTeal),
+            "month": ("Last 30 days", 0, 0, 0, .systemBlue),
+            "quarter": ("Last 3 months", 0, 0, 0, .systemIndigo),
+            "year": ("Last year", 0, 0, 0, .systemOrange),
+            "older": ("Over a year ago", 0, 0, 0, .systemRed),
+            "never": ("Never viewed", 0, 0, 0, .systemGray),
+        ]
+
+        for r in records {
+            let key: String
+            switch r.viewedAgo {
+            case .none: key = "never"
+            case .some(let a) where a < 1: key = "day"
+            case .some(let a) where a < 7: key = "week"
+            case .some(let a) where a < 30: key = "month"
+            case .some(let a) where a < 91: key = "quarter"
+            case .some(let a) where a < 365: key = "year"
+            default: key = "older"
+            }
+            if var entry = lastViewedMap[key] {
+                entry.count += 1
+                entry.bytes += r.fileSize
+                entry.dur += r.duration ?? 0
+                lastViewedMap[key] = entry
+            }
+        }
+
+        let lastViewedOrder = ["day", "week", "month", "quarter", "year", "older", "never"]
+        lastViewedStats = lastViewedOrder.compactMap { key in
+            guard let entry = lastViewedMap[key] else { return nil }
+            return GroupStat(key: key, title: entry.title, count: entry.count, totalSizeBytes: entry.bytes, totalDurationSec: entry.dur, color: entry.color)
+        }
     }
 
     private func updateTreemap() {
@@ -598,6 +641,22 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
                 ))
             }
 
+        case 5: // By Last Viewed (visualize video counts)
+            treemapTitleLabel.stringValue = "Squarified Treemap: Video Count by Last Viewed"
+            for stat in lastViewedStats {
+                guard stat.count > 0 else { continue }
+                let pct = totalRecords > 0 ? (Double(stat.count) / Double(totalRecords)) * 100.0 : 0
+                treemapItems.append(TreemapItem(
+                    id: stat.key,
+                    title: stat.title,
+                    subtitle: formatBytes(stat.totalSizeBytes),
+                    value: Double(stat.count),
+                    formattedValue: "\(stat.count) videos",
+                    percentage: pct,
+                    color: stat.color
+                ))
+            }
+
         default:
             break
         }
@@ -644,6 +703,7 @@ extension DashboardWindowController: NSTableViewDataSource, NSTableViewDelegate 
         if tableView === resolutionsTableView { return resolutionsStats.count }
         if tableView === durationsTableView { return durationsStats.count }
         if tableView === viewsTableView { return viewsStats.count }
+        if tableView === lastViewedTableView { return lastViewedStats.count }
         return 0
     }
 
@@ -709,6 +769,17 @@ extension DashboardWindowController: NSTableViewDataSource, NSTableViewDelegate 
 
             switch colId {
             case "views": text = stat.title; customColor = stat.color
+            case "count": text = "\(stat.count)"
+            case "size": text = formatBytes(stat.totalSizeBytes)
+            case "pct": text = String(format: "%.1f%%", pct)
+            default: text = ""
+            }
+        } else if tableView === lastViewedTableView, lastViewedStats.indices.contains(row) {
+            let stat = lastViewedStats[row]
+            let pct = totalRecords > 0 ? (Double(stat.count) / Double(totalRecords)) * 100.0 : 0
+
+            switch colId {
+            case "lastv": text = stat.title; customColor = stat.color
             case "count": text = "\(stat.count)"
             case "size": text = formatBytes(stat.totalSizeBytes)
             case "pct": text = String(format: "%.1f%%", pct)

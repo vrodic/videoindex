@@ -223,6 +223,8 @@ final class Database {
         let width: Int?
         let duration: Double?
         let viewCount: Int?
+        /// Days since viewed_time; nil if never viewed.
+        let viewedAgo: Double?
         let actorNames: [String]
     }
 
@@ -253,13 +255,15 @@ final class Database {
         let sql: String
         if filterByCondition {
             sql = """
-            SELECT id, filename, file_size, like, width, duration, view_count
+            SELECT id, filename, file_size, like, width, duration, view_count,
+                   julianday('now') - julianday(viewed_time)
             FROM media
             WHERE filename LIKE ? \(extraConditions) \(conditionExpression)
             """
         } else {
             sql = """
-            SELECT id, filename, file_size, like, width, duration, view_count
+            SELECT id, filename, file_size, like, width, duration, view_count,
+                   julianday('now') - julianday(viewed_time)
             FROM media
             WHERE 1=1 \(extraConditions)
             """
@@ -288,6 +292,7 @@ final class Database {
             let width = columnInt(statement, 4)
             let duration = columnDouble(statement, 5)
             let viewCount = columnInt(statement, 6)
+            let viewedAgo = columnDouble(statement, 7)
             let actorNames = actorMap[id] ?? []
 
             records.append(DashboardRecord(
@@ -298,6 +303,7 @@ final class Database {
                 width: width,
                 duration: duration,
                 viewCount: viewCount,
+                viewedAgo: viewedAgo,
                 actorNames: actorNames
             ))
         }

@@ -100,6 +100,15 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		{"3-5", "3 - 5 Views", "orange"},
 		{"6+", "6+ Views", "purple"},
 	})
+	lastViewed := newGroup([][3]string{
+		{"day", "Last 24 hours", "green"},
+		{"week", "Last 7 days", "teal"},
+		{"month", "Last 30 days", "blue"},
+		{"quarter", "Last 3 months", "indigo"},
+		{"year", "Last year", "orange"},
+		{"older", "Over a year ago", "red"},
+		{"never", "Never viewed", "gray"},
+	})
 	actorStats := map[string]*GroupStat{}
 	unassigned := &GroupStat{Key: "__unassigned__", Title: "Unassigned / No Actor", Color: "gray"}
 
@@ -161,6 +170,23 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			views.add("6+", rec)
 		}
 
+		switch a := rec.ViewedAgo; {
+		case a == nil:
+			lastViewed.add("never", rec)
+		case *a < 1:
+			lastViewed.add("day", rec)
+		case *a < 7:
+			lastViewed.add("week", rec)
+		case *a < 30:
+			lastViewed.add("month", rec)
+		case *a < 91:
+			lastViewed.add("quarter", rec)
+		case *a < 365:
+			lastViewed.add("year", rec)
+		default:
+			lastViewed.add("older", rec)
+		}
+
 		names := actorMap[rec.ID]
 		if len(names) == 0 {
 			unassigned.Count++
@@ -211,6 +237,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"resolutions":   res.list(),
 		"durations":     durs.list(),
 		"views":         views.list(),
+		"lastViewed":    lastViewed.list(),
 		"actors":        actors,
 	}
 	if ferr != nil {

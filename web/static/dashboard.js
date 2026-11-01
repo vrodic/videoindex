@@ -99,7 +99,7 @@ export async function openDashboard(ctx) {
     <div class="toolbar">
       <label>Filter scope:</label><div class="seg" data-g="scope"><button data-v="all" class="on">All Media</button><button data-v="filter">Current Filter</button></div>
       <label>Treemap metric:</label><div class="seg" data-g="metric">
-        <button data-v="0" class="on">By Likes</button><button data-v="1">By Resolutions</button><button data-v="2">By Durations</button><button data-v="3">By Views</button><button data-v="4">By Actors</button></div>
+        <button data-v="0" class="on">By Likes</button><button data-v="1">By Resolutions</button><button data-v="2">By Durations</button><button data-v="3">By Views</button><button data-v="4">By Actors</button><button data-v="5">By Last Viewed</button></div>
     </div>
     <div class="cards"></div>
     <div class="treemap-title"></div>
@@ -113,6 +113,7 @@ export async function openDashboard(ctx) {
     { title: 'Video Count by Duration Range', list: 'durations', by: 'count' },
     { title: 'Storage Distribution by View Count Tier', list: 'views', by: 'bytes' },
     { title: 'Storage Distribution by Actor', list: 'actors', by: 'bytes' },
+    { title: 'Video Count by Last Viewed', list: 'lastViewed', by: 'count' },
   ];
 
   const drawTreemap = () => {
@@ -157,6 +158,9 @@ export async function openDashboard(ctx) {
       table('View Counts Breakdown', [
         { t: 'View Tier', v: (r) => r.title }, { t: 'Videos', n: 1, v: (r) => r.count }, { t: 'Total Storage', n: 1, v: size },
         { t: '% Videos', n: 1, v: (r) => pct(r.count, d.count) }], d.views),
+      table('Last Viewed Breakdown', [
+        { t: 'Last Viewed', v: (r) => r.title }, { t: 'Videos', n: 1, v: (r) => r.count }, { t: 'Total Storage', n: 1, v: size },
+        { t: '% Videos', n: 1, v: (r) => pct(r.count, d.count) }], d.lastViewed),
     ].join('');
     drawTreemap();
   };

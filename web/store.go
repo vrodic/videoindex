@@ -402,6 +402,7 @@ type DashboardRecord struct {
 	Width     *int64
 	Duration  *float64
 	ViewCount *int64
+	ViewedAgo *float64 // days since viewed_time; nil if never viewed
 }
 
 func (s *Store) DashboardRecords(ctx context.Context, filtered bool, search, cond string) ([]DashboardRecord, error) {
@@ -411,10 +412,12 @@ func (s *Store) DashboardRecords(ctx context.Context, filtered bool, search, con
 		if err := checkCondition(cond); err != nil {
 			return nil, err
 		}
-		rows, err = s.ro.QueryContext(ctx, `SELECT id, file_size, like, width, duration, view_count
+		rows, err = s.ro.QueryContext(ctx, `SELECT id, file_size, like, width, duration, view_count,
+			julianday('now') - julianday(viewed_time)
 			FROM media WHERE filename LIKE ? `+extraConditions+" "+cond+"\n", "%"+search+"%")
 	} else {
-		rows, err = s.ro.QueryContext(ctx, `SELECT id, file_size, like, width, duration, view_count
+		rows, err = s.ro.QueryContext(ctx, `SELECT id, file_size, like, width, duration, view_count,
+			julianday('now') - julianday(viewed_time)
 			FROM media WHERE 1=1 `+extraConditions)
 	}
 	if err != nil {
@@ -425,7 +428,7 @@ func (s *Store) DashboardRecords(ctx context.Context, filtered bool, search, con
 	for rows.Next() {
 		var r DashboardRecord
 		var size sql.NullInt64
-		if err := rows.Scan(&r.ID, &size, &r.Like, &r.Width, &r.Duration, &r.ViewCount); err != nil {
+		if err := rows.Scan(&r.ID, &size, &r.Like, &r.Width, &r.Duration, &r.ViewCount, &r.ViewedAgo); err != nil {
 			return nil, err
 		}
 		r.FileSize = size.Int64
