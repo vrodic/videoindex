@@ -98,3 +98,7 @@ ENV/
 
 .idea
 .build
+
+# Go server binary
+/web/videoindex
+/web/videoindex-linux

@@ -1,0 +1,134 @@
+// Command videoindex is a web front-end for a SQLite index of a video
+// library: browse/search/rate files, play them in the browser, and scan
+// the library with ffprobe to keep the index up to date.
+//
+//	videoindex serve -root /srv/videos -db /srv/xv.db [-listen :8080]
+//	videoindex scan  -root /srv/videos -db /srv/xv.db [-rescan-skipped] [-workers 8]
+package main
+
+import (
+	"flag"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+)
+
+func usage() {
+	fmt.Fprintf(os.Stderr, `usage:
+  videoindex serve [flags]   run the web UI / video server
+  videoindex scan  [flags]   probe new files under the root into the database
+
+Run "videoindex <command> -h" for the flags of each command.
+Every flag can also be set through an environment variable (shown in -h).
+`)
+	os.Exit(2)
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+	}
+	switch os.Args[1] {
+	case "serve":
+		serveCmd(os.Args[2:])
+	case "scan":
+		scanCmd(os.Args[2:])
+	case "-h", "--help", "help":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", os.Args[1])
+		usage()
+	}
+}
+
+// envDefault returns $name if set, otherwise def.
+func envDefault(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
+func commonFlags(fs *flag.FlagSet) (root, db *string) {
+	root = fs.String("root", envDefault("VIDEOINDEX_ROOT", ""), "media root directory; filenames in the DB are relative to it ($VIDEOINDEX_ROOT)")
+	db = fs.String("db", envDefault("VIDEOINDEX_DB", ""), "SQLite index file ($VIDEOINDEX_DB)")
+	return
+}
+
+func requireDirs(fs *flag.FlagSet, root, db string) {
+	if root == "" || db == "" {
+		fmt.Fprintln(os.Stderr, "both -root and -db are required")
+		fs.Usage()
+		os.Exit(2)
+	}
+	if st, err := os.Stat(root); err != nil || !st.IsDir() {
+		log.Fatalf("root %q is not a readable directory", root)
+	}
+}
+
+func serveCmd(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	root, dbPath := commonFlags(fs)
+	listen := fs.String("listen", envDefault("VIDEOINDEX_LISTEN", ":8080"), "HTTP listen address ($VIDEOINDEX_LISTEN)")
+	thumbs := fs.String("thumbs", envDefault("VIDEOINDEX_THUMBS", ""), "thumbnail cache directory (default <root>/Thumbs) ($VIDEOINDEX_THUMBS)")
+	auth := fs.String("auth", envDefault("VIDEOINDEX_AUTH", ""), "require HTTP basic auth, as user:password ($VIDEOINDEX_AUTH)")
+	thumbWorkers := fs.Int("thumb-workers", 2, "max concurrent ffmpeg thumbnail extractions")
+	transcodes := fs.Int("max-transcodes", 2, "max concurrent ffmpeg playback transcodes")
+	allowDelete := fs.Bool("allow-delete", envDefault("VIDEOINDEX_ALLOW_DELETE", "1") != "0", "let the second dislike delete the file from disk ($VIDEOINDEX_ALLOW_DELETE=0 to disable)")
+	fs.Parse(args)
+	requireDirs(fs, *root, *dbPath)
+
+	absRoot, err := filepath.Abs(*root)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *thumbs == "" {
+		*thumbs = filepath.Join(absRoot, "Thumbs")
+	}
+
+	store, err := OpenStore(*dbPath)
+	if err != nil {
+		log.Fatalf("open db: %v", err)
+	}
+	defer store.Close()
+
+	app := &App{
+		Root:        absRoot,
+		Store:       store,
+		DBPath:      *dbPath,
+		AllowDelete: *allowDelete,
+		Media:       NewMediaService(absRoot, *thumbs, *thumbWorkers, *transcodes),
+	}
+
+	var handler http.Handler = app.Routes()
+	if *auth != "" {
+		handler = basicAuth(*auth, handler)
+	}
+
+	log.Printf("videoindex: root=%s db=%s thumbs=%s listening on %s", absRoot, *dbPath, *thumbs, *listen)
+	if err := http.ListenAndServe(*listen, handler); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func scanCmd(args []string) {
+	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	root, dbPath := commonFlags(fs)
+	rescan := fs.Bool("rescan-skipped", false, "probe files in the skipped_files table again")
+	workers := fs.Int("workers", 8, "parallel ffprobe processes (try 4-16; fewer on HDD / network shares)")
+	fs.Parse(args)
+	requireDirs(fs, *root, *dbPath)
+
+	store, err := OpenStore(*dbPath)
+	if err != nil {
+		log.Fatalf("open db: %v", err)
+	}
+	defer store.Close()
+
+	s := NewScanner(store, *root, *rescan, *workers, os.Stdout)
+	if err := s.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
