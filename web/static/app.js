@@ -9,6 +9,7 @@ import { openDashboard } from './dashboard.js';
 import { openScan } from './scan.js';
 import { openOptions, openHelp } from './dialogs.js';
 import { playerOptions } from './options.js';
+import { playNeed, PLAY_NEED_LABEL, PLAY_NEED_TITLE, PLAY_NEED_RANK } from './playmode.js';
 import { $, esc, store, api } from './util.js';
 
 const DEFAULT_CONDITIONS = [
@@ -26,6 +27,7 @@ const COLUMNS = [
   { id: 'select', title: '✓', cls: 'c' },
   { id: 'id', title: 'ID', cls: 'n' },
   { id: 'filename', title: 'Filename' },
+  { id: 'need', title: 'Play' },
   { id: 'views', title: 'Views', cls: 'n' },
   { id: 'like', title: 'Likes', cls: 'n' },
   { id: 'sizeMB', title: 'Size (MB)', cls: 'n' },
@@ -74,6 +76,7 @@ export async function reload({ keepSelection = true } = {}) {
   }
   if (seq !== loadSeq) return;
   state.items = data.items;
+  for (const it of state.items) it.need = playNeed(it);
   state.checked.clear();
   state.lastQueryOk = !data.error;
   setStatus(data.error ? 'Query error: ' + data.error : `${data.items.length} item${data.items.length === 1 ? '' : 's'}`, !!data.error);
@@ -97,6 +100,7 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'bas
 function cmp(a, b, key) {
   const x = a[key], y = b[key];
   if (key === 'filename') return collator.compare(x, y);
+  if (key === 'need') return PLAY_NEED_RANK[x] - PLAY_NEED_RANK[y];
   if (x == null && y == null) return 0;
   if (x == null) return -1;   // missing values sort lowest, like the original
   if (y == null) return 1;
@@ -157,6 +161,7 @@ export function renderRows() {
       `<div class="c"><input type="checkbox" tabindex="-1"${state.checked.has(it.id) ? ' checked' : ''}></div>` +
       `<div class="n">${it.id}</div>` +
       `<div title="${esc(it.filename)}">${esc(it.filename)}</div>` +
+      `<div class="need need-${it.need}" title="${PLAY_NEED_TITLE[it.need]}">${PLAY_NEED_LABEL[it.need]}</div>` +
       `<div class="n">${it.views ?? ''}</div>` +
       `<div class="n ${likeClass(it.like)}">${it.like ?? ''}</div>` +
       `<div class="n">${it.sizeMB}</div>` +
@@ -222,12 +227,40 @@ export function markMissing(id) {
 
 // --- actions -------------------------------------------------------------------
 
-// The player lives in its own window, sized to a share of the screen and
-// reused for every play (later plays are sent to it with postMessage).
-let playerWin = null;
+// The player (player.html) runs either in its own pop-up window, sized to a
+// share of the screen, or — with the "inline" option — in a frame covering
+// this page. It is reused for every play (later plays are sent to it with
+// postMessage).
+let playerWin = null;    // the player's window: the pop-up or the frame's window
+let inlineFrame = null;  // the <iframe> for inline playback, once created
+
+function openPlayer(item, startPercent = 0) {
+  return playerOptions().inline ? openInlinePlayer(item, startPercent) : openPlayerWindow(item, startPercent);
+}
+
+function openInlinePlayer(item, startPercent) {
+  if (!inlineFrame) {
+    inlineFrame = document.createElement('iframe');
+    inlineFrame.className = 'inline-player';
+    inlineFrame.title = 'Player';
+    inlineFrame.allow = 'autoplay; fullscreen';
+    inlineFrame.hidden = true;
+    document.body.append(inlineFrame);
+  }
+  if (inlineFrame.hidden) {
+    // Fresh load for each opening; while showing, reuse it like the pop-up.
+    inlineFrame.src = `/player.html?id=${item.id}&start=${startPercent}`;
+    inlineFrame.hidden = false;
+  } else {
+    inlineFrame.contentWindow.postMessage({ type: 'play', id: item.id, start: startPercent }, location.origin);
+  }
+  playerWin = inlineFrame.contentWindow;
+  inlineFrame.focus();
+  return true;
+}
 
 function openPlayerWindow(item, startPercent = 0) {
-  if (playerWin && !playerWin.closed) {
+  if (playerWin && !playerWin.closed && playerWin !== inlineFrame?.contentWindow) {
     playerWin.postMessage({ type: 'play', id: item.id, start: startPercent }, location.origin);
     playerWin.focus();
     return true;
@@ -238,7 +271,7 @@ function openPlayerWindow(item, startPercent = 0) {
   const left = Math.round((screen.availLeft ?? 0) + (screen.availWidth - w) / 2);
   const top = Math.round((screen.availTop ?? 0) + (screen.availHeight - h) / 2);
   playerWin = window.open(`/player.html?id=${item.id}&start=${startPercent}`, 'videoindex-player',
-    `popup=yes,width=${w},height=${h},left=${left},top=${top}`);
+    `popup=yes,toolbar=no,location=no,menubar=no,status=no,scrollbars=no,width=${w},height=${h},left=${left},top=${top}`);
   if (!playerWin) {
     setStatus('The player window was blocked — allow pop-ups for this site', true);
     return false;
@@ -263,13 +296,18 @@ window.addEventListener('message', (e) => {
     select(i + e.data.delta);
     playItem(next);
   } else if (e.data.type === 'closed') {
+    if (inlineFrame && e.source === inlineFrame.contentWindow) {
+      inlineFrame.hidden = true;
+      inlineFrame.src = 'about:blank';
+      playerWin = null;
+    }
     window.focus();
     ctx.focusTable();
   }
 });
 
 async function playItem(item, startPercent) {
-  if (!item || !openPlayerWindow(item, startPercent)) return;
+  if (!item || !openPlayer(item, startPercent)) return;
   try {
     const r = await api(`/api/media/${item.id}/viewed`, { method: 'POST' });
     item.views = r.views;

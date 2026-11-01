@@ -4,6 +4,7 @@
 //
 //	videoindex serve -root /srv/videos -db /srv/xv.db [-listen :8080]
 //	videoindex scan  -root /srv/videos -db /srv/xv.db [-rescan-skipped] [-workers 8]
+//	videoindex firefox-setup [-profile DIR] [-remove]
 package main
 
 import (
@@ -22,6 +23,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `usage:
   videoindex serve [flags]   run the web UI / video server
   videoindex scan  [flags]   probe new files under the root into the database
+  videoindex firefox-setup   hide Firefox's address bar in the player window
 
 Run "videoindex <command> -h" for the flags of each command.
 Every flag can also be set through an environment variable (shown in -h).
@@ -38,6 +40,8 @@ func main() {
 		serveCmd(os.Args[2:])
 	case "scan":
 		scanCmd(os.Args[2:])
+	case "firefox-setup":
+		firefoxSetupCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:

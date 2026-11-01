@@ -1,5 +1,6 @@
 // Player window (replaces mpv). Opened by the list page as a popup
-// (player.html?id=…&start=…) and reused for later plays via postMessage.
+// (player.html?id=…&start=…), or embedded in it as a frame when the "inline"
+// option is on, and reused for later plays via postMessage.
 //
 // Plays the file directly when the browser can, otherwise asks the server to
 // remux or transcode it to fragmented MP4 on the fly. Those streams have no
@@ -7,8 +8,9 @@
 // — Firefox in particular — stall when asked to seek inside such a stream,
 // even within what they've buffered). The custom seek bar always shows the
 // file's full timeline.
-import { $, api } from './util.js';
+import { $, api, store } from './util.js';
 import { playerOptions, savePlayerOptions } from './options.js';
+import { playbackChain } from './playmode.js';
 
 const video = () => $('video');
 
@@ -20,6 +22,10 @@ let offset = 0;          // stream start offset (seconds) for remux/transcode
 let pendingSeek = null;  // direct mode: seek once metadata is in
 let audio = null;        // { ctx, gain } once Web Audio boost is needed
 let autoMuted = false;   // muted only because autoplay with sound was refused
+let rotation = 0;        // client-side rotation in degrees: 0, 90, 180, 270
+
+// Running inside the list page (inline option) rather than a pop-up.
+const embedded = window.parent !== window;
 
 const fmt = (t) => {
   if (!isFinite(t) || t < 0) t = 0;
@@ -32,8 +38,9 @@ const fmt = (t) => {
 
 function tellList(msg) {
   try {
-    if (window.opener && !window.opener.closed) {
-      window.opener.postMessage(msg, location.origin);
+    const list = embedded ? window.parent : window.opener;
+    if (list && !list.closed) {
+      list.postMessage(msg, location.origin);
       return true;
     }
   } catch { /* opener navigated away */ }
@@ -47,17 +54,6 @@ window.addEventListener('message', (e) => {
 });
 
 // --- playback ------------------------------------------------------------------
-
-function playbackChain(it) {
-  const v = video();
-  const hevc = (it.codec || '').toLowerCase() === 'hevc';
-  const hevcOk = !hevc || v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') !== '';
-  const chain = [];
-  if (it.play === 'direct' && hevcOk) chain.push('direct');
-  if ((it.play === 'direct' || it.play === 'remux') && hevcOk) chain.push('remux');
-  chain.push('transcode');
-  return chain;
-}
 
 function duration() {
   const v = video();
@@ -138,8 +134,12 @@ async function openItem(id, startPercent) {
   opts = playerOptions();
   modes = playbackChain(it);
   mode = modes[0];
-  document.title = it.filename.split('/').pop();
+  // The " — videoindex player" suffix is what "videoindex firefox-setup"
+  // keys on to hide Firefox's address bar in this window.
+  document.title = it.filename.split('/').pop() + ' — videoindex player';
   $('player-title').textContent = it.filename;
+  rotation = (store('rotation') || {})[it.id] || 0;
+  applyRotation();
   load(startPercent ? (it.duration || 0) * startPercent / 100 : 0);
   window.focus();
   poke();
@@ -151,7 +151,9 @@ function closePlayer() {
   v.removeAttribute('src');
   v.load(); // aborts the request, which also stops any server-side ffmpeg
   item = null;
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   tellList({ type: 'closed' });
+  if (embedded) return; // the list page hides the frame
   window.close();
   // Only reached when the browser won't let us close (window not opened by script).
   osd('Close this window to return to the list', 4000);
@@ -164,6 +166,38 @@ function seekTo(t) {
   if (mode === 'direct') v.currentTime = t;
   else load(t, { paused: v.paused });
   updateBar();
+}
+
+// --- rotation ------------------------------------------------------------------
+
+// Rotation is purely visual (a CSS transform), remembered per file. For a
+// quarter turn the element is laid out with the window's width and height
+// swapped, so object-fit: contain still fits the rotated picture.
+function applyRotation() {
+  const v = video();
+  const quarter = rotation % 180 !== 0;
+  v.classList.toggle('rotated', quarter);
+  if (quarter) {
+    const p = $('player');
+    v.style.width = p.clientHeight + 'px';
+    v.style.height = p.clientWidth + 'px';
+    v.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
+  } else {
+    v.style.width = v.style.height = '';
+    v.style.transform = rotation ? `rotate(${rotation}deg)` : '';
+  }
+  $('pl-rotate').classList.toggle('on', rotation !== 0);
+}
+
+function rotate(delta) {
+  rotation = (rotation + delta + 360) % 360;
+  applyRotation();
+  if (item) {
+    const saved = store('rotation') || {};
+    if (rotation) saved[item.id] = rotation; else delete saved[item.id];
+    store('rotation', saved);
+  }
+  osd(`Rotation ${rotation}°`);
 }
 
 // --- volume / options ------------------------------------------------------
@@ -320,6 +354,8 @@ function onKey(e) {
     N: () => playNeighbor(-1),
     '.': () => frameStep(1),
     ',': () => frameStep(-1),
+    r: () => rotate(90),
+    R: () => rotate(-90),
     o: () => osd(`${fmt(p)} / ${fmt(duration())}  ·  ${mode}`, 2000),
     q: closePlayer, Escape: closePlayer,
   };
@@ -366,6 +402,8 @@ function init() {
   $('pl-mute').addEventListener('click', () => setOpt('mute', !opts.mute));
   $('pl-loop').addEventListener('click', () => setOpt('loop', !opts.loop));
   $('pl-fs').addEventListener('click', toggleFullscreen);
+  $('pl-rotate').addEventListener('click', (e) => rotate(e.shiftKey ? -90 : 90));
+  new ResizeObserver(applyRotation).observe($('player'));
   $('pl-vol').addEventListener('input', (e) => setOpt('volume', +e.target.value));
   $('pl-speed').addEventListener('change', (e) => { setOpt('speed', +e.target.value); e.target.blur(); });
 

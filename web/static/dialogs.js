@@ -12,7 +12,8 @@ export function openOptions() {
       <label for="volume">Default volume</label>
       ${sel('volume', [[10, '10%'], [25, '25%'], [33, '33% (default)'], [50, '50%'], [75, '75%'], [100, '100%']], o.volume)}
       <span></span>${chk('boost', 'Allow volume above 100% (up to 1000%, like mpv --volume-max=1000)')}
-      <label for="windowSize">Player window</label>
+      <span></span>${chk('inline', 'Play in this window instead of a pop-up')}
+      <label for="windowSize">Pop-up size</label>
       ${sel('windowSize', [[50, '50% of the screen'], [75, '75% of the screen (default)'], [90, '90% of the screen'], [100, '100% of the screen']], o.windowSize)}
       <label for="speed">Playback speed</label>
       ${sel('speed', [[1, '1.0× (normal)'], [1.25, '1.25×'], [1.5, '1.5×'], [2, '2.0×']], o.speed)}
@@ -30,7 +31,7 @@ export function openOptions() {
       ...o,
       volume: +q('volume').value, boost: q('boost').checked, windowSize: +q('windowSize').value, speed: +q('speed').value,
       mute: q('mute').checked, noAudio: q('noAudio').checked, loop: q('loop').checked,
-      keepOpen: q('keepOpen').checked, autoNext: q('autoNext').checked,
+      keepOpen: q('keepOpen').checked, autoNext: q('autoNext').checked, inline: q('inline').checked,
     });
   };
   body.addEventListener('change', save);
@@ -70,6 +71,7 @@ export function openHelp() {
         ['Backspace', 'Reset speed'],
         ['l', 'Toggle loop'],
         ['f', 'Fullscreen (double-click works too)'],
+        ['r R', 'Rotate 90° clockwise / counter-clockwise (remembered per file)'],
         [', .', 'Frame step back / forward'],
         ['n Enter', 'Play next row'],
         ['N', 'Play previous row'],

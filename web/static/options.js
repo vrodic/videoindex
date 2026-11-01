@@ -10,6 +10,7 @@ export const DEFAULT_OPTIONS = {
   keepOpen: false,   // stay open at the end instead of closing
   autoNext: false,   // play the next row when a video ends
   windowSize: 75,    // player window size, % of the screen
+  inline: false,     // play in the list window instead of a pop-up
   speed: 1,
 };
 
