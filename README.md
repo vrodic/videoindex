@@ -44,7 +44,7 @@ to deploy.
 ## Run
 
 ```bash
-videoindex serve -root /Volumes/root/mnt/picko/stuff/x -db xv.db
+videoindex serve -root /Volumes/root/mnt/stuff/videos -db videos.db
 ```
 
 Then open <http://localhost:8080>.
@@ -54,7 +54,7 @@ to another machine, copy `xv.db` and point `-root` at the new location.
 Nothing in the database needs to change. For example, on a Linux server:
 
 ```bash
-videoindex serve -root /srv/media/x -db /srv/videoindex/xv.db -listen :8080
+videoindex serve -root /srv/media/ -db /srv/videoindex/videos.db -listen :8080
 ```
 
 ### `serve` flags
@@ -184,9 +184,9 @@ The layout matches the macOS app:
 
 ### The list
 
-The columns are ✓, ID, Filename, Views, Likes, Size (MB), Last Viewed,
-Width and Density (`file_size / (duration × width)`, a rough bitrate per
-pixel).
+The columns are ✓, ID, Filename, Play, Views, Likes, Size (MB), Last
+Viewed, Width and Density (`file_size / (duration × width)`, a rough bitrate
+per pixel).
 
 - **Sorting:** click a header to sort; click it again to reverse. Press `r`
   to reload the query and clear the sort.
@@ -197,6 +197,12 @@ pixel).
 - **Likes colours:** red is disliked, then orange, yellow, green, teal and
   purple for 1 to 5+ likes.
 - **Red rows:** the file no longer exists on disk.
+- **Play column:** what the server must do to stream the file to this
+  browser (see [How a video gets to the browser](#how-a-video-gets-to-the-browser)).
+  It is empty for direct playback. `remux` (grey) rewraps the container
+  without re-encoding. `tc on seek` (yellow) is HEVC that remuxes from the
+  start but transcodes on every seek. `transcode` (orange) re-encodes for
+  the whole playback. Sorting by it orders from cheapest to costliest.
 - **Large lists:** the list is virtualized, so whole-library queries stay
   fast.
 
@@ -284,9 +290,31 @@ filmstrip frame to start from that point.
 - **Views:** opening a video increments its view count and sets
   `viewed_time`, just as launching `mpv` did.
 - **Closing:** press `q` or `Esc` to close the player and return to the list.
+- **Playing in the main window:** turn on **Play in this window instead of a
+  pop-up** in the player options. The player then covers the list page
+  instead of opening a window. Closing it returns to the list.
+- **Rotation:** press `r` (or click ↻) to rotate the picture 90° clockwise,
+  and `R` (or Shift-click) to rotate it counter-clockwise. The rotation is
+  done in the browser, so it costs no transcoding. It is remembered per
+  file in this browser.
 
-The browser must allow pop-ups for the site. Without that, the status line
-says the player window was blocked.
+In pop-up mode, the browser must allow pop-ups for the site. Without that,
+the status line says the player window was blocked.
+
+**A player window without the address bar (Firefox).** A web page can't
+remove the browser's address bar from a pop-up. Firefox always shows a
+read-only one. Run this once and restart Firefox:
+
+    videoindex firefox-setup              # every Firefox installation's default profile
+    videoindex firefox-setup -profile DIR # one profile (about:support → Profile Directory)
+    videoindex firefox-setup -remove      # undo
+
+It adds a rule to the profile's `chrome/userChrome.css` and turns on
+`toolkit.legacyUserProfileCustomizations.stylesheets` in `user.js`. After
+that, the player window has only the window manager's title bar around the
+video. The rule applies only to pop-up windows whose title ends in
+"videoindex player", so other pop-ups, like sign-in windows, keep their
+address bar.
 
 If the browser blocks autoplay with sound in the new window, the video starts
 muted and unmutes on your first click or key press. In Firefox you can avoid
@@ -335,8 +363,8 @@ These replace the old MPV menu and are saved in the browser:
 - **Default volume:** 33% by default.
 - **Allow volume above 100%:** up to 1000%, using Web Audio gain. This is
   the equivalent of `--volume-max=1000`.
-- **Player window size:** 50%, 75% (the default), 90% or 100% of the
-  screen.
+- **Play in this window instead of a pop-up.**
+- **Pop-up size:** 50%, 75% (the default), 90% or 100% of the screen.
 - **Playback speed.**
 - **Start muted.**
 - **No audio.**
@@ -360,6 +388,7 @@ Mostly the same as mpv:
 | `Backspace` | reset speed |
 | `l` | loop |
 | `f`, double-click | fullscreen |
+| `r` `R` | rotate 90° clockwise / counter-clockwise |
 | `,` `.` | frame step (direct playback only) |
 | `n` / `Enter`, `N` | play next / previous row of the list |
 | `o` | show position |
@@ -415,7 +444,8 @@ web/                   Go server + scanner (this is the app)
   dashboard.go         dashboard aggregation
   static/              embedded web UI (plain ES modules, no build step)
     index.html, app.js   the list window
-    player.html, player.js  the player window
+    player.html, player.js  the player window (pop-up or inline frame)
+    playmode.js        delivery mode per file (player chain, list Play column)
 macos/                 previous macOS (AppKit + mpv) app
 videoindex/            previous Python tools (scanner, PyQt player, backup, delete)
 queries.sql            useful ad-hoc queries
