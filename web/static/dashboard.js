@@ -1,6 +1,6 @@
 // Library analytics: totals, a squarified treemap and breakdown tables,
 // for the whole library or the current search + condition.
-import { esc, api } from './app.js';
+import { esc, api } from './util.js';
 import { openModal } from './modal.js';
 
 export function formatBytes(b) {

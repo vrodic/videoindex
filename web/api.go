@@ -27,6 +27,7 @@ type App struct {
 	Store       *Store
 	Media       *MediaService
 	AllowDelete bool
+	Watcher     *Watcher
 
 	scanMu  sync.Mutex
 	scan    *Scanner
@@ -42,12 +43,14 @@ func (a *App) Routes() http.Handler {
 
 	mux.HandleFunc("GET /api/config", a.handleConfig)
 	mux.HandleFunc("GET /api/items", a.handleItems)
+	mux.HandleFunc("GET /api/media/{id}", a.handleItem)
 	mux.HandleFunc("POST /api/media/{id}/viewed", a.handleViewed)
 	mux.HandleFunc("POST /api/media/{id}/like", a.handleLike)
 	mux.HandleFunc("POST /api/media/{id}/dislike", a.handleDislike)
 	mux.HandleFunc("GET /api/media/{id}/thumb/{pct}", a.handleThumb)
 	mux.HandleFunc("GET /api/media/{id}/file", a.handleFile)
 	mux.HandleFunc("GET /api/media/{id}/stream", a.handleStream)
+	mux.HandleFunc("GET /api/media/{id}/keyframe", a.handleKeyframe)
 	mux.HandleFunc("GET /api/media/{id}/actors", a.handleMediaActors)
 	mux.HandleFunc("POST /api/media/{id}/actors", a.handleAddMediaActor)
 	mux.HandleFunc("DELETE /api/media/{id}/actors/{actor}", a.handleRemoveMediaActor)
@@ -107,6 +110,28 @@ type itemOut struct {
 	Play string `json:"play"`
 }
 
+func newItemOut(it MediaItem) itemOut {
+	codec := ""
+	if it.Codec != nil {
+		codec = *it.Codec
+	}
+	return itemOut{it, PlayMode(it.Filename, codec)}
+}
+
+func (a *App) handleItem(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	it, err := a.Store.GetItem(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, errors.New("no such media"))
+		return
+	}
+	writeJSON(w, http.StatusOK, newItemOut(*it))
+}
+
 func (a *App) handleItems(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	items, err := a.Store.LoadItems(r.Context(), q.Get("search"), q.Get("cond"))
@@ -117,11 +142,7 @@ func (a *App) handleItems(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]itemOut, len(items))
 	for i, it := range items {
-		codec := ""
-		if it.Codec != nil {
-			codec = *it.Codec
-		}
-		out[i] = itemOut{it, PlayMode(it.Filename, codec)}
+		out[i] = newItemOut(it)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -232,6 +253,15 @@ func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
 		start = 0
 	}
 	a.Media.ServeStream(w, r, m, r.URL.Query().Get("mode"), start)
+}
+
+func (a *App) handleKeyframe(w http.ResponseWriter, r *http.Request) {
+	m := a.mediaFromPath(w, r)
+	if m == nil {
+		return
+	}
+	t, _ := strconv.ParseFloat(r.URL.Query().Get("t"), 64)
+	writeJSON(w, http.StatusOK, map[string]float64{"t": a.Media.KeyframeBefore(r.Context(), m, t)})
 }
 
 func (a *App) handleMediaActors(w http.ResponseWriter, r *http.Request) {
@@ -435,14 +465,23 @@ func (a *App) handleScanStart(w http.ResponseWriter, r *http.Request) {
 	if body.Workers <= 0 {
 		body.Workers = 8
 	}
+	if err := a.startScan(body.RescanSkipped, body.Workers); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+}
+
+// startScan runs a full scan in the background (from the UI, or when the
+// watcher missed events).
+func (a *App) startScan(rescanSkipped bool, workers int) error {
 	a.scanMu.Lock()
 	defer a.scanMu.Unlock()
 	if a.scanRun {
-		writeErr(w, http.StatusConflict, errors.New("a scan is already running"))
-		return
+		return errors.New("a scan is already running")
 	}
 	a.scanLog = &ringLog{max: 256 << 10}
-	a.scan = NewScanner(a.Store, a.Root, body.RescanSkipped, body.Workers, a.scanLog)
+	a.scan = NewScanner(a.Store, a.Root, rescanSkipped, workers, a.scanLog)
 	a.scanRun, a.scanErr = true, ""
 	go func(s *Scanner) {
 		err := s.Run()
@@ -454,7 +493,7 @@ func (a *App) handleScanStart(w http.ResponseWriter, r *http.Request) {
 			log.Printf("scan failed: %v", err)
 		}
 	}(a.scan)
-	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+	return nil
 }
 
 func (a *App) handleScanStatus(w http.ResponseWriter, r *http.Request) {
@@ -465,6 +504,9 @@ func (a *App) handleScanStatus(w http.ResponseWriter, r *http.Request) {
 		done, total := a.scan.Progress()
 		resp["done"], resp["total"] = done, total
 		resp["log"] = a.scanLog.String()
+	}
+	if a.Watcher != nil {
+		resp["watch"] = a.Watcher.Status()
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

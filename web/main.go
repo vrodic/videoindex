@@ -7,12 +7,15 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"time"
 )
 
 func usage() {
@@ -76,6 +79,8 @@ func serveCmd(args []string) {
 	auth := fs.String("auth", envDefault("VIDEOINDEX_AUTH", ""), "require HTTP basic auth, as user:password ($VIDEOINDEX_AUTH)")
 	thumbWorkers := fs.Int("thumb-workers", 2, "max concurrent ffmpeg thumbnail extractions")
 	transcodes := fs.Int("max-transcodes", 2, "max concurrent ffmpeg playback transcodes")
+	watch := fs.Bool("watch", envDefault("VIDEOINDEX_WATCH", defaultWatch) != "0", "watch the root for new files and index them once complete; Linux only ($VIDEOINDEX_WATCH=0 to disable)")
+	settle := fs.Duration("watch-settle", 30*time.Second, "how long a new file must be left untouched before it is probed")
 	allowDelete := fs.Bool("allow-delete", envDefault("VIDEOINDEX_ALLOW_DELETE", "1") != "0", "let the second dislike delete the file from disk ($VIDEOINDEX_ALLOW_DELETE=0 to disable)")
 	fs.Parse(args)
 	requireDirs(fs, *root, *dbPath)
@@ -102,6 +107,15 @@ func serveCmd(args []string) {
 		Media:       NewMediaService(absRoot, *thumbs, *thumbWorkers, *transcodes),
 	}
 
+	if *watch {
+		w, err := StartWatcher(context.Background(), store, absRoot, *thumbs, *settle, func() { app.startScan(false, 8) })
+		if err != nil {
+			log.Printf("watch: %v", err)
+		} else {
+			app.Watcher = w
+		}
+	}
+
 	var handler http.Handler = app.Routes()
 	if *auth != "" {
 		handler = basicAuth(*auth, handler)
@@ -112,6 +126,9 @@ func serveCmd(args []string) {
 		log.Fatal(err)
 	}
 }
+
+// The watcher needs inotify, so it is on by default only on Linux.
+var defaultWatch = map[bool]string{true: "1", false: "0"}[runtime.GOOS == "linux"]
 
 func scanCmd(args []string) {
 	fs := flag.NewFlagSet("scan", flag.ExitOnError)

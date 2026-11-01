@@ -1,5 +1,5 @@
 // Run the library scanner (ffprobe new files into the index) from the UI.
-import { esc, api } from './app.js';
+import { esc, api } from './util.js';
 import { openModal } from './modal.js';
 
 export async function openScan(ctx) {
@@ -16,7 +16,10 @@ export async function openScan(ctx) {
     </div>
     <progress id="scan-progress" value="0" max="1" hidden></progress>
     <div id="scan-state"></div>
-    <pre class="scan-log" id="scan-log"></pre>`;
+    <pre class="scan-log" id="scan-log"></pre>
+    <h3 style="margin:4px 0 0;font-size:13px">New-file watcher</h3>
+    <div id="watch-state"></div>
+    <pre class="scan-log" id="watch-log" style="height:20vh"></pre>`;
   const $q = (s) => body.querySelector(s);
 
   const poll = async () => {
@@ -38,7 +41,19 @@ export async function openScan(ctx) {
     if (atBottom) log.scrollTop = log.scrollHeight;
     if (wasRunning && !s.running) ctx.reload();
     wasRunning = s.running;
-    if (s.running) timer = setTimeout(poll, 1000);
+
+    const w = s.watch;
+    $q('#watch-state').textContent = w
+      ? `Watching ${w.dirs} directories · ${w.pending} new file${w.pending === 1 ? '' : 's'} waiting to finish downloading`
+      : 'Off. Start the server on Linux with -watch to index new files automatically.';
+    $q('#watch-log').hidden = !w;
+    if (w) {
+      const wl = $q('#watch-log');
+      const bottom = wl.scrollTop + wl.clientHeight >= wl.scrollHeight - 4;
+      wl.textContent = w.log || 'No activity yet.';
+      if (bottom) wl.scrollTop = wl.scrollHeight;
+    }
+    timer = setTimeout(poll, s.running ? 1000 : 3000);
   };
 
   $q('#scan-start').addEventListener('click', async () => {

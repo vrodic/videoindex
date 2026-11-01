@@ -3,33 +3,13 @@
 // shared `ctx` object passed to their init().
 import { initPreview, refreshPreview } from './preview.js';
 import { initActors, refreshMediaActors } from './actors.js';
-import { initPlayer, openPlayer, playerOpen } from './player.js';
-import { openModal, closeModal, modalOpen } from './modal.js';
+import { closeModal, modalOpen } from './modal.js';
 import { openWordCloud } from './wordcloud.js';
 import { openDashboard } from './dashboard.js';
 import { openScan } from './scan.js';
 import { openOptions, openHelp } from './dialogs.js';
-
-export const $ = (id) => document.getElementById(id);
-export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-export function store(key, value) {
-  try {
-    if (value === undefined) return JSON.parse(localStorage.getItem('videoindex.' + key));
-    localStorage.setItem('videoindex.' + key, JSON.stringify(value));
-  } catch { return null; }
-}
-
-export async function api(path, { method = 'GET', body, signal } = {}) {
-  const res = await fetch(path, {
-    method, signal,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  return data;
-}
+import { playerOptions } from './options.js';
+import { $, esc, store, api } from './util.js';
 
 const DEFAULT_CONDITIONS = [
   'AND like > 2 ORDER BY viewed_time, random() -- (Default: Highly liked, oldest viewed first)',
@@ -242,9 +222,54 @@ export function markMissing(id) {
 
 // --- actions -------------------------------------------------------------------
 
+// The player lives in its own window, sized to a share of the screen and
+// reused for every play (later plays are sent to it with postMessage).
+let playerWin = null;
+
+function openPlayerWindow(item, startPercent = 0) {
+  if (playerWin && !playerWin.closed) {
+    playerWin.postMessage({ type: 'play', id: item.id, start: startPercent }, location.origin);
+    playerWin.focus();
+    return true;
+  }
+  const f = Math.min(100, Math.max(20, playerOptions().windowSize)) / 100;
+  const w = Math.round(screen.availWidth * f);
+  const h = Math.round(screen.availHeight * f);
+  const left = Math.round((screen.availLeft ?? 0) + (screen.availWidth - w) / 2);
+  const top = Math.round((screen.availTop ?? 0) + (screen.availHeight - h) / 2);
+  playerWin = window.open(`/player.html?id=${item.id}&start=${startPercent}`, 'videoindex-player',
+    `popup=yes,width=${w},height=${h},left=${left},top=${top}`);
+  if (!playerWin) {
+    setStatus('The player window was blocked — allow pop-ups for this site', true);
+    return false;
+  }
+  return true;
+}
+
+// Messages from the player window: it asks for the next/previous row and
+// reports when it closes.
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin || !e.data) return;
+  // After this page reloads, re-adopt a player window that is still open.
+  if ((!playerWin || playerWin.closed) && e.source?.name === 'videoindex-player') playerWin = e.source;
+  if (e.source !== playerWin) return;
+  if (e.data.type === 'neighbor') {
+    const i = state.items.findIndex((x) => x.id === e.data.id);
+    const next = i >= 0 ? state.items[i + e.data.delta] : null;
+    if (!next) {
+      playerWin.postMessage({ type: 'osd', text: e.data.delta > 0 ? 'End of list' : 'Start of list' }, location.origin);
+      return;
+    }
+    select(i + e.data.delta);
+    playItem(next);
+  } else if (e.data.type === 'closed') {
+    window.focus();
+    ctx.focusTable();
+  }
+});
+
 async function playItem(item, startPercent) {
-  if (!item) return;
-  openPlayer(item, startPercent);
+  if (!item || !openPlayerWindow(item, startPercent)) return;
   try {
     const r = await api(`/api/media/${item.id}/viewed`, { method: 'POST' });
     item.views = r.views;
@@ -391,7 +416,7 @@ function initSplitter() {
 function pageRows() { return Math.max(1, Math.floor($('tbody').clientHeight / ROW_H) - 1); }
 
 function onTableKey(e) {
-  if (playerOpen() || modalOpen()) return;
+  if (modalOpen()) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
   const handled = {
@@ -425,7 +450,6 @@ function inEditable(el) {
 }
 
 function onGlobalKey(e) {
-  if (playerOpen()) return; // the player has its own keys
   if (modalOpen()) {
     if (e.key === 'Escape') { e.preventDefault(); closeModal(); }
     return;
@@ -505,7 +529,6 @@ async function init() {
   initSplitter();
   initPreview(ctx);
   initActors(ctx);
-  initPlayer(ctx);
   await reload();
   ctx.focusTable();
 }

@@ -148,6 +148,7 @@ func (m *MediaService) ServeStream(w http.ResponseWriter, r *http.Request, file 
 	case <-r.Context().Done():
 		return
 	case <-time.After(5 * time.Second):
+		log.Printf("stream %d: refused, %d concurrent streams already running", file.ID, cap(m.transcodeSem))
 		http.Error(w, "too many concurrent transcodes", http.StatusServiceUnavailable)
 		return
 	}
@@ -195,6 +196,39 @@ func (m *MediaService) ServeStream(w http.ResponseWriter, r *http.Request, file 
 	if err != nil && r.Context().Err() == nil {
 		log.Printf("stream %d (%s) failed after %d bytes: %v %s", file.ID, mode, n, err, strings.TrimSpace(stderr.String()))
 	}
+}
+
+// KeyframeBefore returns the time of the video keyframe at or before t —
+// where a stream-copying ffmpeg -ss t actually starts. Remuxed streams are
+// started exactly there so audio (re-encoded, which would otherwise start
+// precisely at t) lines up with the video; a gap at the start makes
+// Firefox stall. Falls back to t on error.
+func (m *MediaService) KeyframeBefore(ctx context.Context, file *MediaFile, t float64) float64 {
+	p, err := m.Path(file.Filename)
+	if err != nil || t <= 0 {
+		return t
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-select_streams", "v:0",
+		"-show_entries", "packet=pts_time,flags", "-of", "csv=p=0",
+		"-read_intervals", strconv.FormatFloat(t, 'f', 3, 64)+"%+#24", p).Output()
+	if err != nil {
+		return t
+	}
+	// First keyframe packet after the demuxer's seek; ignore any that land
+	// after t (some demuxers seek forward).
+	for _, line := range strings.Split(string(out), "\n") {
+		pts, flags, _ := strings.Cut(strings.TrimSpace(line), ",")
+		if !strings.HasPrefix(flags, "K") {
+			continue
+		}
+		if k, err := strconv.ParseFloat(pts, 64); err == nil && k <= t+0.001 && k >= 0 {
+			return k
+		}
+		break
+	}
+	return t
 }
 
 // flushWriter flushes after every write so the browser gets the fragmented

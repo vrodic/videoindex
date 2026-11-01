@@ -1,6 +1,6 @@
 // Player options (the old MPV menu) and the keyboard help.
 import { openModal } from './modal.js';
-import { playerOptions, savePlayerOptions, DEFAULT_OPTIONS } from './player.js';
+import { playerOptions, savePlayerOptions, DEFAULT_OPTIONS } from './options.js';
 
 export function openOptions() {
   const body = openModal('Player Options', { small: true });
@@ -12,9 +12,10 @@ export function openOptions() {
       <label for="volume">Default volume</label>
       ${sel('volume', [[10, '10%'], [25, '25%'], [33, '33% (default)'], [50, '50%'], [75, '75%'], [100, '100%']], o.volume)}
       <span></span>${chk('boost', 'Allow volume above 100% (up to 1000%, like mpv --volume-max=1000)')}
+      <label for="windowSize">Player window</label>
+      ${sel('windowSize', [[50, '50% of the screen'], [75, '75% of the screen (default)'], [90, '90% of the screen'], [100, '100% of the screen']], o.windowSize)}
       <label for="speed">Playback speed</label>
       ${sel('speed', [[1, '1.0× (normal)'], [1.25, '1.25×'], [1.5, '1.5×'], [2, '2.0×']], o.speed)}
-      <span></span>${chk('fullscreen', 'Start in fullscreen')}
       <span></span>${chk('mute', 'Start muted')}
       <span></span>${chk('noAudio', 'No audio')}
       <span></span>${chk('loop', 'Loop video')}
@@ -27,7 +28,7 @@ export function openOptions() {
     const q = (id) => body.querySelector('#' + id);
     savePlayerOptions({
       ...o,
-      volume: +q('volume').value, boost: q('boost').checked, fullscreen: q('fullscreen').checked, speed: +q('speed').value,
+      volume: +q('volume').value, boost: q('boost').checked, windowSize: +q('windowSize').value, speed: +q('speed').value,
       mute: q('mute').checked, noAudio: q('noAudio').checked, loop: q('loop').checked,
       keepOpen: q('keepOpen').checked, autoNext: q('autoNext').checked,
     });

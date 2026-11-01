@@ -1,5 +1,5 @@
 // One shared modal dialog; each feature fills its body.
-import { $ } from './app.js';
+import { $ } from './util.js';
 
 let onClose = null;
 

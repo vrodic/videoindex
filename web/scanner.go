@@ -83,7 +83,7 @@ type mediaRow struct {
 func (s *Scanner) collect(known, skipped map[string]bool) ([]scanJob, error) {
 	var todo []scanJob
 	thumbsDir := filepath.Join(s.root, "Thumbs")
-	err := walkFollow(s.root, func(path string) {
+	err := walkFollow(s.root, nil, func(path string) {
 		if path == thumbsDir || strings.HasPrefix(path, thumbsDir+string(filepath.Separator)) {
 			return
 		}
@@ -113,8 +113,9 @@ func (s *Scanner) collect(known, skipped map[string]bool) ([]scanJob, error) {
 // symlinked directories like os.walk(followlinks=True) — so a directory
 // reachable through two paths is visited under both, exactly as the Python
 // scanner did and as existing rows expect. Only a directory that is its own
-// ancestor (a symlink loop) is skipped.
-func walkFollow(root string, fn func(path string)) error {
+// ancestor (a symlink loop) is skipped. onDir, if set, is called for each
+// directory before it is read; returning false skips it.
+func walkFollow(root string, onDir func(dir string) bool, fn func(path string)) error {
 	if _, err := os.Stat(root); err != nil {
 		return err
 	}
@@ -122,6 +123,9 @@ func walkFollow(root string, fn func(path string)) error {
 	walk = func(dir string, ancestors map[string]bool) {
 		real, err := filepath.EvalSymlinks(dir)
 		if err != nil || ancestors[real] {
+			return
+		}
+		if onDir != nil && !onDir(dir) {
 			return
 		}
 		ancestors[real] = true
@@ -309,12 +313,18 @@ func (s *Scanner) flush(rows []mediaRow, skippedRows [][3]string, previouslySkip
 		return err
 	}
 	defer tx.Rollback()
+	var inserted []string
 	for _, r := range rows {
-		if _, err := tx.Exec(`INSERT INTO media
+		// NOT EXISTS: the file watcher and a scan may both pick up a new file.
+		res, err := tx.Exec(`INSERT INTO media
 			(filename,duration,codec_name,width,height,nb_frames,creation_time,file_size)
-			VALUES(?,?,?,?,?,?,?,?)`,
-			r.filename, r.duration, r.codec, r.width, r.height, r.nbFrames, r.creationTime, r.fileSize); err != nil {
+			SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM media WHERE filename = ?)`,
+			r.filename, r.duration, r.codec, r.width, r.height, r.nbFrames, r.creationTime, r.fileSize, r.filename)
+		if err != nil {
 			return err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			inserted = append(inserted, r.filename)
 		}
 		// a file that now probes fine must leave the skipped table
 		if _, err := tx.Exec(`DELETE FROM skipped_files WHERE filename=?`, r.filename); err != nil {
@@ -330,9 +340,9 @@ func (s *Scanner) flush(rows []mediaRow, skippedRows [][3]string, previouslySkip
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	s.Added += len(rows)
-	for _, r := range rows {
-		if previouslySkipped[r.filename] {
+	s.Added += len(inserted)
+	for _, f := range inserted {
+		if previouslySkipped[f] {
 			s.Recovered++
 		}
 	}

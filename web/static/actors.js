@@ -1,6 +1,6 @@
 // Actors section: filter the list by one or more actors, and view / edit /
 // assign the actors of the selected file.
-import { $, esc, api } from './app.js';
+import { $, esc, api } from './util.js';
 
 let ctx;
 let allActors = [];

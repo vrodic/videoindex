@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
@@ -121,21 +122,10 @@ func checkCondition(cond string) error {
 	return nil
 }
 
-// LoadItems returns rows whose filename contains search, further filtered
-// and ordered by the free-form SQL fragment cond (e.g.
-// "AND like > 2 ORDER BY viewed_time, random()").
-func (s *Store) LoadItems(ctx context.Context, search, cond string) ([]MediaItem, error) {
-	if err := checkCondition(cond); err != nil {
-		return nil, err
-	}
-	q := `SELECT id, filename, view_count, like, file_size, CAST(viewed_time AS TEXT), width, height,
-	             file_size / (duration * width), duration, codec_name
-	      FROM media
-	      WHERE filename LIKE ? ` + extraConditions + " " + cond + "\n"
-	rows, err := s.ro.QueryContext(ctx, q, "%"+search+"%")
-	if err != nil {
-		return nil, err
-	}
+const itemColumns = `id, filename, view_count, like, file_size, CAST(viewed_time AS TEXT), width, height,
+	file_size / (duration * width), duration, codec_name`
+
+func scanItems(rows *sql.Rows) ([]MediaItem, error) {
 	defer rows.Close()
 	items := []MediaItem{}
 	for rows.Next() {
@@ -154,6 +144,37 @@ func (s *Store) LoadItems(ctx context.Context, search, cond string) ([]MediaItem
 		items = append(items, it)
 	}
 	return items, rows.Err()
+}
+
+// LoadItems returns rows whose filename contains search, further filtered
+// and ordered by the free-form SQL fragment cond (e.g.
+// "AND like > 2 ORDER BY viewed_time, random()").
+func (s *Store) LoadItems(ctx context.Context, search, cond string) ([]MediaItem, error) {
+	if err := checkCondition(cond); err != nil {
+		return nil, err
+	}
+	q := `SELECT ` + itemColumns + ` FROM media WHERE filename LIKE ? ` + extraConditions + " " + cond + "\n"
+	rows, err := s.ro.QueryContext(ctx, q, "%"+search+"%")
+	if err != nil {
+		return nil, err
+	}
+	return scanItems(rows)
+}
+
+// GetItem returns one row in the listing format.
+func (s *Store) GetItem(ctx context.Context, id int64) (*MediaItem, error) {
+	rows, err := s.rw.QueryContext(ctx, `SELECT `+itemColumns+` FROM media WHERE id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	items, err := scanItems(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &items[0], nil
 }
 
 // MediaFile is what playback / thumbnailing need to know about one row.
@@ -429,4 +450,42 @@ func (s *Store) MediaActorNames(ctx context.Context) (map[int64][]string, error)
 		out[id] = append(out[id], name)
 	}
 	return out, rows.Err()
+}
+
+// HasMedia reports whether filename (relative to the root) is indexed.
+func (s *Store) HasMedia(rel string) bool {
+	var one int
+	return s.rw.QueryRow(`SELECT 1 FROM media WHERE filename = ? LIMIT 1`, rel).Scan(&one) == nil
+}
+
+// RenamePath updates rows after a file or directory moved inside the
+// library, returning the number of media rows changed.
+func (s *Store) RenamePath(ctx context.Context, oldRel, newRel string, dir bool) (int64, error) {
+	tx, err := s.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var res sql.Result
+	if dir {
+		// substr() counts characters, so compare by rune length.
+		oldPrefix, newPrefix := oldRel+"/", newRel+"/"
+		n := utf8.RuneCountInString(oldPrefix)
+		res, err = tx.Exec(`UPDATE media SET filename = ? || substr(filename, ?) WHERE substr(filename, 1, ?) = ?`,
+			newPrefix, n+1, n, oldPrefix)
+		if err == nil {
+			_, err = tx.Exec(`UPDATE OR REPLACE skipped_files SET filename = ? || substr(filename, ?) WHERE substr(filename, 1, ?) = ?`,
+				newPrefix, n+1, n, oldPrefix)
+		}
+	} else {
+		res, err = tx.Exec(`UPDATE media SET filename = ? WHERE filename = ?`, newRel, oldRel)
+		if err == nil {
+			_, err = tx.Exec(`UPDATE OR REPLACE skipped_files SET filename = ? WHERE filename = ?`, newRel, oldRel)
+		}
+	}
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, tx.Commit()
 }

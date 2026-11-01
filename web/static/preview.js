@@ -2,7 +2,7 @@
 // to play from there) and an "Up Next" column — the selection plus the next
 // nine rows (click one to select it). Frames come from the server's on-disk
 // thumbnail cache, generated with ffmpeg on first request.
-import { $ } from './app.js';
+import { $ } from './util.js';
 
 const FILM_PERCENTS = [15, 30, 45, 60, 75, 90];
 const UPNEXT_PERCENT = 45; // shares the cache entry with the 45% filmstrip frame

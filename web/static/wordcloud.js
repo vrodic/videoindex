@@ -1,6 +1,6 @@
 // Word cloud of filename words (or adjacent word pairs, which tend to be
 // first_last names). Clicking a word searches for it.
-import { esc, api } from './app.js';
+import { esc, api } from './util.js';
 import { openModal, closeModal } from './modal.js';
 
 const PAGE = 200;

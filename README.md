@@ -69,6 +69,8 @@ videoindex serve -root /srv/media/x -db /srv/videoindex/xv.db -listen :8080
 | `-allow-delete` | `VIDEOINDEX_ALLOW_DELETE` | `true` | allow the second dislike to delete the file (`=0` disables) |
 | `-thumb-workers` | | `2` | concurrent `ffmpeg` thumbnail extractions |
 | `-max-transcodes` | | `2` | concurrent `ffmpeg` playback streams |
+| `-watch` | `VIDEOINDEX_WATCH` | on (Linux) | watch the root for new files and index them (`=0` disables) |
+| `-watch-settle` | | `30s` | how long a new file must be left untouched before it's probed |
 
 The default thumbnail directory is the one the macOS app used, with the same
 `<id>_<percent>.jpg` naming, so thumbnails it already made are reused. If
@@ -127,6 +129,50 @@ The scanner works like the old `scanner.py`:
   `-rescan-skipped`. A file that later probes fine is moved out of that
   table.
 - At the end it prints a summary and lists every failure.
+
+### Watching for new files
+
+On Linux, `serve` also watches the whole root with inotify and indexes new
+files as they arrive. Files arrive by being copied in, downloaded, or moved
+into the library. The watcher tries hard not to probe a file that's still
+being written. It waits until all of these are true:
+
+- **Quiet:** nothing has written to, closed or renamed the file for
+  `-watch-settle` (30 s). Its size and modification time must also stay the
+  same across two checks.
+- **Not a partial download:** in-progress names (`.part`, `.crdownload`,
+  `.!qB`, `.aria2`, `.tmp`, `~`, …) are ignored until they're renamed to
+  their final name. Files with a download sidecar next to them
+  (`movie.mp4.aria2`, `movie.mp4.part`) wait until the sidecar is gone.
+- **No writers:** no process has the file open for writing. The watcher
+  checks `/proc/*/fd`, which catches torrent clients that preallocate the
+  whole file and keep it open. It can only see other users' processes when
+  the server runs as root or as the downloader's user.
+- **Probes cleanly:** `ffprobe` must read the file. A failed probe is retried
+  twice more (after 1 and 2 minutes) before the file goes into
+  `skipped_files`, as with a scan.
+
+Renames and moves *inside* the library update the existing rows instead of
+adding new ones, for single files and whole directories, so likes, views and
+actors are kept. New directories are watched as they appear.
+
+The **Scan** dialog shows what the watcher is doing:
+- how many directories are watched
+- files waiting to finish downloading
+- a log of files added, renamed, retried or skipped
+
+The list itself doesn't refresh on its own. Press `r` to see new files.
+
+Notes:
+- **Directory limit:** inotify needs one watch per directory. On a big
+  library, raise the limit if the log says so:
+  `sysctl fs.inotify.max_user_watches=524288`.
+- **Network shares:** inotify only sees changes made on the server itself.
+  It doesn't see changes made by other machines to an NFS/SMB share.
+- **Missed events:** if the kernel event queue overflows, a full scan runs
+  automatically.
+- **Other platforms:** on macOS and Windows the watcher is unavailable. Use
+  the Scan button or `videoindex scan`.
 
 ## Using the web UI
 
@@ -227,31 +273,60 @@ same two-step guard as the original tool. Start the server with
 
 ## Player
 
-Press `Enter` or double-click a row to play the video in a full-window
-player. Opening a video increments its view count and sets `viewed_time`,
-just as launching `mpv` did. Press `q` or `Esc` to close the player and
-return to the list.
+Press `Enter` or double-click a row to play the video. You can also click a
+filmstrip frame to start from that point.
+
+- **Player window:** the video plays in a separate player window, centred
+  and sized to 75% of the screen by default. Change the size in the player
+  options. The video fills that window.
+- **Window reuse:** later plays reuse the same window, like mpv opening a new
+  file.
+- **Views:** opening a video increments its view count and sets
+  `viewed_time`, just as launching `mpv` did.
+- **Closing:** press `q` or `Esc` to close the player and return to the list.
+
+The browser must allow pop-ups for the site. Without that, the status line
+says the player window was blocked.
+
+If the browser blocks autoplay with sound in the new window, the video starts
+muted and unmutes on your first click or key press. In Firefox you can avoid
+this: click the permissions icon in the address bar and allow **Audio and
+Video** for the site.
 
 ### How a video gets to the browser
 
 The server picks a delivery mode from the container and codec:
 
-1. **Direct:** MP4, MOV and WebM files with H.264, HEVC, VP8, VP9 or AV1
-   video are served as-is with HTTP range requests, so seeking is native.
+1. **Direct:** MP4, M4V, MOV and WebM files with H.264, HEVC, VP8, VP9 or
+   AV1 video are served as-is with HTTP range requests, so seeking is
+   native.
 2. **Remux:** H.264 or HEVC video in other containers (MKV, FLV, TS, AVI…)
    is copied into fragmented MP4 by `ffmpeg`, with audio re-encoded to AAC.
    This is cheap, with no video re-encode.
 3. **Transcode:** anything else (WMV, Xvid/DivX, MPEG-1/2, …) is re-encoded
    to H.264/AAC (`libx264 -preset veryfast`, max 1080p).
 
-If the browser can't decode a mode, for example HEVC in Firefox or 10-bit
-H.264, the player falls back to the next mode automatically. The current
-mode is shown in the top-right corner.
+If the browser can't decode a mode, the player falls back to the next mode
+automatically. Examples are many HEVC `.m4v` files in Firefox, and 10-bit
+H.264. The current mode is shown in the top-right corner.
 
-Remuxed and transcoded streams start at a given offset. Seeking within what
-has already been received is instant. Seeking further restarts the stream at
-the new position. The seek bar always shows the file's full length. The
-`ffmpeg` process stops as soon as the player closes or seeks away.
+#### Seeking in streamed modes
+
+Remuxed and transcoded streams have no byte ranges, so every seek restarts
+the stream at the new position. The seek bar always shows the file's full
+length. The `ffmpeg` process stops as soon as the player closes or seeks
+away. Two details matter for seeking to work everywhere:
+
+- **H.264 remux:** a stream copy can only start on a keyframe. The server
+  looks up the keyframe at or before the target, and the stream starts
+  exactly there. The re-encoded audio then lines up with the video, and the
+  displayed time stays exact. Without this, Firefox stalls on the audio gap.
+- **HEVC remux:** a remux is used only from the start of the file. Seeks
+  switch to transcoding from the exact seek point. HEVC files are often
+  "open-GOP": their mid-file keyframes can't start a decode on their own,
+  and browsers stall on such a stream. This is common with HEVC `.m4v`
+  files. Transcoding from the seek point is also frame-accurate, whereas
+  these files have keyframes only every 10 s.
 
 ### Player options (`o`, or the **Player ⚙** button)
 
@@ -260,8 +335,8 @@ These replace the old MPV menu and are saved in the browser:
 - **Default volume:** 33% by default.
 - **Allow volume above 100%:** up to 1000%, using Web Audio gain. This is
   the equivalent of `--volume-max=1000`.
-- **Start in fullscreen.** The player always fills the browser window;
-  this also puts the browser itself into fullscreen.
+- **Player window size:** 50%, 75% (the default), 90% or 100% of the
+  screen.
 - **Playback speed.**
 - **Start muted.**
 - **No audio.**
@@ -285,8 +360,8 @@ Mostly the same as mpv:
 | `Backspace` | reset speed |
 | `l` | loop |
 | `f`, double-click | fullscreen |
-| `,` `.` | frame step |
-| `n` / `Enter`, `N` | play next / previous row |
+| `,` `.` | frame step (direct playback only) |
+| `n` / `Enter`, `N` | play next / previous row of the list |
 | `o` | show position |
 | `q` `Esc` | close |
 
@@ -333,10 +408,14 @@ web/                   Go server + scanner (this is the app)
   main.go              CLI: serve / scan
   store.go             SQLite access
   scanner.go           ffprobe scanner (port of videoindex/scanner.py)
-  media.go             file serving, remux/transcode, thumbnails
+  media.go             file serving, remux/transcode, keyframes, thumbnails
+  watcher.go           new-file watcher: settling, renames, ingestion
+  watcher_linux.go     inotify backend, /proc open-for-writing check
   api.go               HTTP API, word cloud, scan-from-UI
   dashboard.go         dashboard aggregation
   static/              embedded web UI (plain ES modules, no build step)
+    index.html, app.js   the list window
+    player.html, player.js  the player window
 macos/                 previous macOS (AppKit + mpv) app
 videoindex/            previous Python tools (scanner, PyQt player, backup, delete)
 queries.sql            useful ad-hoc queries

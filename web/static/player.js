@@ -1,29 +1,16 @@
-// In-browser player (replaces mpv). Plays the file directly when the
-// browser can, otherwise asks the server to remux or transcode it to
-// fragmented MP4 on the fly. Transcoded streams can't be range-seeked, so
-// seeking outside what's buffered restarts the stream at the new offset;
-// the custom seek bar always shows the file's full timeline.
-import { $, store } from './app.js';
+// Player window (replaces mpv). Opened by the list page as a popup
+// (player.html?id=…&start=…) and reused for later plays via postMessage.
+//
+// Plays the file directly when the browser can, otherwise asks the server to
+// remux or transcode it to fragmented MP4 on the fly. Those streams have no
+// byte ranges, so every seek restarts the stream at the new offset (browsers
+// — Firefox in particular — stall when asked to seek inside such a stream,
+// even within what they've buffered). The custom seek bar always shows the
+// file's full timeline.
+import { $, api } from './util.js';
+import { playerOptions, savePlayerOptions } from './options.js';
 
-let ctx;
 const video = () => $('video');
-
-export const DEFAULT_OPTIONS = {
-  volume: 33,        // percent; up to 1000 with boost (mpv --volume-max=1000)
-  boost: true,
-  mute: false,
-  noAudio: false,
-  loop: false,
-  keepOpen: false,   // stay open at the end instead of closing
-  autoNext: false,   // play the next row when a video ends
-  fullscreen: false, // start in browser fullscreen (the player always fills the window)
-  speed: 1,
-};
-
-export function playerOptions() {
-  return { ...DEFAULT_OPTIONS, ...(store('player') || {}) };
-}
-export function savePlayerOptions(o) { store('player', o); }
 
 let opts = playerOptions();
 let item = null;
@@ -32,8 +19,7 @@ let mode = '';
 let offset = 0;          // stream start offset (seconds) for remux/transcode
 let pendingSeek = null;  // direct mode: seek once metadata is in
 let audio = null;        // { ctx, gain } once Web Audio boost is needed
-
-export const playerOpen = () => !$('player').hidden;
+let autoMuted = false;   // muted only because autoplay with sound was refused
 
 const fmt = (t) => {
   if (!isFinite(t) || t < 0) t = 0;
@@ -41,6 +27,26 @@ const fmt = (t) => {
   const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
 };
+
+// --- talking to the list window ---------------------------------------------
+
+function tellList(msg) {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(msg, location.origin);
+      return true;
+    }
+  } catch { /* opener navigated away */ }
+  return false;
+}
+
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin || !e.data) return;
+  if (e.data.type === 'play') openItem(e.data.id, e.data.start);
+  if (e.data.type === 'osd') osd(e.data.text);
+});
+
+// --- playback ------------------------------------------------------------------
 
 function playbackChain(it) {
   const v = video();
@@ -60,9 +66,40 @@ function duration() {
 }
 const position = () => (mode === 'direct' ? 0 : offset) + video().currentTime;
 
-function load(start) {
+function startPlayback() {
   const v = video();
+  v.play().catch((err) => {
+    if (err.name !== 'NotAllowedError') return;
+    // The browser refused autoplay with sound in this window: play muted
+    // rather than not at all, and unmute on the first click / key press.
+    autoMuted = true;
+    v.muted = true;
+    v.play().catch(() => {});
+    osd('Autoplay with sound was blocked — click or press any key to unmute', 5000);
+  });
+}
+
+let loadSeq = 0;
+async function load(start, { paused = false } = {}) {
+  const v = video();
+  const seq = ++loadSeq;
   start = Math.max(0, Math.min(start || 0, Math.max(0, duration() - 1)));
+  let streamMode = mode;
+  if (mode === 'remux' && start > 0) {
+    if ((item.codec || '').toLowerCase() === 'hevc') {
+      // HEVC is often open-GOP: mid-file keyframes are CRA frames whose
+      // leading pictures reference earlier ones, and browsers (Firefox)
+      // can't start decoding a copied stream there. Transcode from the
+      // seek point instead — also frame-accurate.
+      streamMode = 'transcode';
+    } else {
+      // A stream copy can only start on a keyframe; start exactly there so
+      // the re-encoded audio lines up (and the shown time is exact).
+      const k = await api(`/api/media/${item.id}/keyframe?t=${start.toFixed(3)}`).catch(() => null);
+      if (seq !== loadSeq) return; // superseded by a newer seek
+      if (k && k.t >= 0) start = k.t;
+    }
+  }
   if (mode === 'direct') {
     offset = 0;
     pendingSeek = start > 0 ? start : null;
@@ -70,11 +107,11 @@ function load(start) {
   } else {
     offset = start;
     pendingSeek = null;
-    v.src = `/api/media/${item.id}/stream?mode=${mode}&start=${start.toFixed(2)}`;
+    v.src = `/api/media/${item.id}/stream?mode=${streamMode}&start=${start.toFixed(3)}`;
   }
-  $('player-mode').textContent = mode;
+  $('player-mode').textContent = streamMode;
   applyOptions();
-  v.play().catch(() => {});
+  if (!paused) startPlayback();
 }
 
 function fallback(reason) {
@@ -89,46 +126,43 @@ function fallback(reason) {
   load(at);
 }
 
-export function openPlayer(it, startPercent) {
+async function openItem(id, startPercent) {
+  let it;
+  try {
+    it = await api(`/api/media/${id}`);
+  } catch (e) {
+    osd('Cannot load media ' + id + ': ' + e.message, 6000);
+    return;
+  }
   item = it;
   opts = playerOptions();
   modes = playbackChain(it);
   mode = modes[0];
+  document.title = it.filename.split('/').pop();
   $('player-title').textContent = it.filename;
-  $('player').hidden = false;
-  if (opts.fullscreen && !document.fullscreenElement) $('player').requestFullscreen?.().catch(() => {});
-  const start = startPercent ? (it.duration || 0) * startPercent / 100 : 0;
-  load(start);
+  load(startPercent ? (it.duration || 0) * startPercent / 100 : 0);
+  window.focus();
   poke();
 }
 
-export function closePlayer() {
+function closePlayer() {
   const v = video();
   v.pause();
   v.removeAttribute('src');
   v.load(); // aborts the request, which also stops any server-side ffmpeg
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  $('player').hidden = true;
   item = null;
-  ctx.renderRows();
-  ctx.focusTable();
+  tellList({ type: 'closed' });
+  window.close();
+  // Only reached when the browser won't let us close (window not opened by script).
+  osd('Close this window to return to the list', 4000);
 }
 
 function seekTo(t) {
+  if (!item) return;
   const v = video();
   t = Math.max(0, Math.min(t, duration() - 0.5));
-  if (mode === 'direct') {
-    v.currentTime = t;
-  } else {
-    // Within the part of the stream already received? Seek locally.
-    const rel = t - offset;
-    for (let i = 0; i < v.buffered.length; i++) {
-      if (rel >= v.buffered.start(i) && rel <= v.buffered.end(i)) { v.currentTime = rel; return; }
-    }
-    const paused = v.paused;
-    load(t);
-    if (paused) v.pause();
-  }
+  if (mode === 'direct') v.currentTime = t;
+  else load(t, { paused: v.paused });
   updateBar();
 }
 
@@ -161,7 +195,7 @@ function applyOptions() {
       if (a.ctx.state === 'suspended') a.ctx.resume();
     }
   }
-  v.muted = opts.mute || opts.noAudio;
+  v.muted = opts.mute || opts.noAudio || autoMuted;
   v.playbackRate = opts.speed;
   const vol = $('pl-vol');
   vol.max = maxVol;
@@ -171,8 +205,7 @@ function applyOptions() {
   $('pl-speed').value = String(opts.speed);
   if ($('pl-speed').value !== String(opts.speed)) {
     // speed not in the dropdown (e.g. 1.1×): add it
-    const o = new Option(opts.speed + '×', String(opts.speed));
-    $('pl-speed').add(o);
+    $('pl-speed').add(new Option(opts.speed + '×', String(opts.speed)));
     $('pl-speed').value = String(opts.speed);
   }
   $('pl-loop').classList.toggle('on', opts.loop);
@@ -183,6 +216,12 @@ function setOpt(key, value, message) {
   savePlayerOptions(opts);
   applyOptions();
   if (message) osd(message);
+}
+
+function unAutoMute() {
+  if (!autoMuted) return;
+  autoMuted = false;
+  applyOptions();
 }
 
 // --- UI ----------------------------------------------------------------------
@@ -224,13 +263,10 @@ function seekFromEvent(e) {
   return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * duration();
 }
 
+// Next / previous row of the list window's current query.
 function playNeighbor(delta) {
-  const { items } = ctx.state;
-  const i = items.findIndex((x) => x.id === item?.id);
-  const next = items[i + delta];
-  if (!next) { osd(delta > 0 ? 'End of list' : 'Start of list'); return; }
-  ctx.select(i + delta);
-  ctx.play(next);
+  if (!item) return;
+  if (!tellList({ type: 'neighbor', id: item.id, delta })) osd('The list window is closed');
 }
 
 function togglePause() {
@@ -244,11 +280,18 @@ function toggleFullscreen() {
   else $('player').requestFullscreen?.();
 }
 
+function frameStep(dir) {
+  // Only meaningful (and safe) on a range-seekable file.
+  if (mode !== 'direct') { osd('Frame stepping needs direct playback'); return; }
+  const v = video();
+  v.pause();
+  v.currentTime = Math.max(0, v.currentTime + dir / 30);
+}
+
 function onKey(e) {
-  if (!playerOpen()) return;
+  unAutoMute();
   if (e.target.tagName === 'SELECT' || (e.target.tagName === 'INPUT' && e.target.type !== 'range')) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  const v = video();
   const p = position();
   const speeds = (f) => {
     const s = Math.round(Math.max(0.25, Math.min(4, opts.speed * f)) * 100) / 100;
@@ -275,23 +318,21 @@ function onKey(e) {
     L: () => setOpt('loop', !opts.loop, opts.loop ? 'Loop off' : 'Loop on'),
     n: () => playNeighbor(1), Enter: () => playNeighbor(1),
     N: () => playNeighbor(-1),
-    '.': () => { v.pause(); v.currentTime += 1 / 30; },
-    ',': () => { v.pause(); v.currentTime -= 1 / 30; },
+    '.': () => frameStep(1),
+    ',': () => frameStep(-1),
     o: () => osd(`${fmt(p)} / ${fmt(duration())}  ·  ${mode}`, 2000),
     q: closePlayer, Escape: closePlayer,
   };
   const fn = actions[e.key];
   if (fn) {
     e.preventDefault();
-    e.stopPropagation();
     fn();
     poke();
     updateBar();
   }
 }
 
-export function initPlayer(c) {
-  ctx = c;
+function init() {
   const v = video();
   v.addEventListener('timeupdate', updateBar);
   v.addEventListener('progress', updateBar);
@@ -317,7 +358,8 @@ export function initPlayer(c) {
   v.addEventListener('click', togglePause);
   v.addEventListener('dblclick', toggleFullscreen);
 
-  document.addEventListener('keydown', onKey, true);
+  document.addEventListener('keydown', onKey);
+  document.addEventListener('pointerdown', unAutoMute, true);
   $('player').addEventListener('mousemove', poke);
   $('player-close').addEventListener('click', closePlayer);
   $('pl-play').addEventListener('click', togglePause);
@@ -338,4 +380,9 @@ export function initPlayer(c) {
     if (dragging) $('pl-fill').style.width = (t / duration()) * 100 + '%';
   });
   seek.addEventListener('pointerup', (e) => { if (dragging) { dragging = false; seekTo(seekFromEvent(e)); } });
+
+  const q = new URLSearchParams(location.search);
+  if (q.get('id')) openItem(+q.get('id'), +q.get('start') || 0);
 }
+
+init();

@@ -185,7 +185,8 @@ input:focus, select:focus, button:focus-visible, .table:focus-visible { outline:
 .player .time { font-variant-numeric: tabular-nums; font-size: 12px; min-width: 52px; text-align: center; }
 .player #pl-vol { width: 110px; }
 .player .vol-label { font-size: 12px; min-width: 38px; font-variant-numeric: tabular-nums; }
-.seek { flex: 1; height: 16px; position: relative; cursor: pointer; }
+.player-page { background: #000; }
+.seek { flex: 1; min-width: 80px; height: 16px; position: relative; cursor: pointer; }
 .seek::before { content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 4px; background: rgba(255,255,255,.25); border-radius: 2px; }
 .seek-buf, .seek-fill { position: absolute; left: 0; top: 6px; height: 4px; border-radius: 2px; }
 .seek-buf { background: rgba(255,255,255,.35); }

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>videoindex player</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%230a84ff%22/%3E%3Cpath d=%22M6 4.5v7l5.5-3.5z%22 fill=%22white%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+<script type="module" src="player.js"></script>
+</head>
+<body class="player-page">
+<div class="player" id="player">
+  <video id="video" playsinline preload="auto"></video>
+  <div class="player-top">
+    <span id="player-title"></span>
+    <span class="player-mode" id="player-mode"></span>
+    <button id="player-close" title="Close (Esc / q)">✕</button>
+  </div>
+  <div class="player-osd" id="player-osd"></div>
+  <div class="player-bar">
+    <button id="pl-play" title="Play/pause (Space)">▶</button>
+    <span class="time" id="pl-time">0:00</span>
+    <div class="seek" id="pl-seek"><div class="seek-buf" id="pl-buf"></div><div class="seek-fill" id="pl-fill"></div><div class="seek-hover" id="pl-hover"></div></div>
+    <span class="time" id="pl-dur">0:00</span>
+    <button id="pl-mute" title="Mute (m)">🔊</button>
+    <input id="pl-vol" type="range" min="0" max="100" step="1" title="Volume (9 / 0)">
+    <span class="vol-label" id="pl-vol-label"></span>
+    <select id="pl-speed" title="Speed ([ / ])">
+      <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1×</option>
+      <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+    </select>
+    <button id="pl-loop" title="Loop (l)">⟳</button>
+    <button id="pl-fs" title="Fullscreen (f)">⛶</button>
+  </div>
+</div>
+</body>
+</html>
