@@ -260,7 +260,8 @@ These replace the old MPV menu and are saved in the browser:
 - **Default volume:** 33% by default.
 - **Allow volume above 100%:** up to 1000%, using Web Audio gain. This is
   the equivalent of `--volume-max=1000`.
-- **Player size:** 50%, 75% or 100% of the window, or fullscreen.
+- **Start in fullscreen.** The player always fills the browser window;
+  this also puts the browser itself into fullscreen.
 - **Playback speed.**
 - **Start muted.**
 - **No audio.**

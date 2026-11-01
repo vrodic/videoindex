@@ -16,7 +16,7 @@ export const DEFAULT_OPTIONS = {
   loop: false,
   keepOpen: false,   // stay open at the end instead of closing
   autoNext: false,   // play the next row when a video ends
-  fit: '75',         // '50' | '75' | '100' | 'fullscreen'
+  fullscreen: false, // start in browser fullscreen (the player always fills the window)
   speed: 1,
 };
 
@@ -96,8 +96,7 @@ export function openPlayer(it, startPercent) {
   mode = modes[0];
   $('player-title').textContent = it.filename;
   $('player').hidden = false;
-  $('player').style.setProperty('--fit', opts.fit === 'fullscreen' ? '100%' : opts.fit + '%');
-  if (opts.fit === 'fullscreen' && !document.fullscreenElement) $('player').requestFullscreen?.().catch(() => {});
+  if (opts.fullscreen && !document.fullscreenElement) $('player').requestFullscreen?.().catch(() => {});
   const start = startPercent ? (it.duration || 0) * startPercent / 100 : 0;
   load(start);
   poke();
