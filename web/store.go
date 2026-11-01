@@ -454,6 +454,14 @@ func (s *Store) MediaActorNames(ctx context.Context) (map[int64][]string, error)
 	return out, rows.Err()
 }
 
+// IsEmpty reports whether nothing has been indexed yet: no media rows and
+// no skipped files (so a library of only unprobeable files isn't rescanned
+// on every start).
+func (s *Store) IsEmpty() bool {
+	var one int
+	return s.rw.QueryRow(`SELECT 1 FROM media UNION ALL SELECT 1 FROM skipped_files LIMIT 1`).Scan(&one) == sql.ErrNoRows
+}
+
 // HasMedia reports whether filename (relative to the root) is indexed.
 func (s *Store) HasMedia(rel string) bool {
 	var one int

@@ -116,6 +116,13 @@ func serveCmd(args []string) {
 		Media:       NewMediaService(absRoot, *thumbs, *thumbWorkers, *transcodes),
 	}
 
+	if store.IsEmpty() {
+		log.Printf("database is empty; scanning %s", absRoot)
+		if err := app.startScan(false, 8); err != nil {
+			log.Printf("initial scan: %v", err)
+		}
+	}
+
 	if *watch {
 		w, err := StartWatcher(context.Background(), store, absRoot, *thumbs, *settle, func() { app.startScan(false, 8) })
 		if err != nil {
