@@ -2,8 +2,8 @@
 // library: browse/search/rate files, play them in the browser, and scan
 // the library with ffprobe to keep the index up to date.
 //
-//	videoindex serve -root /srv/videos -db /srv/xv.db [-listen :8080]
-//	videoindex scan  -root /srv/videos -db /srv/xv.db [-rescan-skipped] [-workers 8]
+//	videoindex serve -root /srv/videos [-db /srv/xv.db] [-listen :8080]
+//	videoindex scan  -root /srv/videos [-db /srv/xv.db] [-rescan-skipped] [-workers 8]
 //	videoindex firefox-setup [-profile DIR] [-remove]
 package main
 
@@ -60,18 +60,23 @@ func envDefault(name, def string) string {
 
 func commonFlags(fs *flag.FlagSet) (root, db *string) {
 	root = fs.String("root", envDefault("VIDEOINDEX_ROOT", ""), "media root directory; filenames in the DB are relative to it ($VIDEOINDEX_ROOT)")
-	db = fs.String("db", envDefault("VIDEOINDEX_DB", ""), "SQLite index file ($VIDEOINDEX_DB)")
+	db = fs.String("db", envDefault("VIDEOINDEX_DB", ""), "SQLite index file (default <root>/videoindex.db) ($VIDEOINDEX_DB)")
 	return
 }
 
-func requireDirs(fs *flag.FlagSet, root, db string) {
-	if root == "" || db == "" {
-		fmt.Fprintln(os.Stderr, "both -root and -db are required")
+// requireDirs validates -root and fills in the default -db
+// (<root>/videoindex.db) when none was given.
+func requireDirs(fs *flag.FlagSet, root string, db *string) {
+	if root == "" {
+		fmt.Fprintln(os.Stderr, "-root is required")
 		fs.Usage()
 		os.Exit(2)
 	}
 	if st, err := os.Stat(root); err != nil || !st.IsDir() {
 		log.Fatalf("root %q is not a readable directory", root)
+	}
+	if *db == "" {
+		*db = filepath.Join(root, "videoindex.db")
 	}
 }
 
@@ -87,7 +92,7 @@ func serveCmd(args []string) {
 	settle := fs.Duration("watch-settle", 30*time.Second, "how long a new file must be left untouched before it is probed")
 	allowDelete := fs.Bool("allow-delete", envDefault("VIDEOINDEX_ALLOW_DELETE", "1") != "0", "let the second dislike delete the file from disk ($VIDEOINDEX_ALLOW_DELETE=0 to disable)")
 	fs.Parse(args)
-	requireDirs(fs, *root, *dbPath)
+	requireDirs(fs, *root, dbPath)
 
 	absRoot, err := filepath.Abs(*root)
 	if err != nil {
@@ -140,7 +145,7 @@ func scanCmd(args []string) {
 	rescan := fs.Bool("rescan-skipped", false, "probe files in the skipped_files table again")
 	workers := fs.Int("workers", 8, "parallel ffprobe processes (try 4-16; fewer on HDD / network shares)")
 	fs.Parse(args)
-	requireDirs(fs, *root, *dbPath)
+	requireDirs(fs, *root, dbPath)
 
 	store, err := OpenStore(*dbPath)
 	if err != nil {

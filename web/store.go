@@ -27,7 +27,9 @@ type Store struct {
 }
 
 func OpenStore(path string) (*Store, error) {
-	rw, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(10000)")
+	// synchronous=OFF: skip fsync for faster writes. An OS crash or power
+	// loss mid-write can corrupt the database (an app crash cannot).
+	rw, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(10000)&_pragma=synchronous(OFF)")
 	if err != nil {
 		return nil, err
 	}

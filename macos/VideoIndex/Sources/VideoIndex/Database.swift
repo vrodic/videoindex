@@ -19,6 +19,9 @@ final class Database {
             let message = String(cString: sqlite3_errmsg(db))
             fatalError("Unable to open database at \(path): \(message)")
         }
+        // Skip fsync for faster writes. An OS crash or power loss mid-write
+        // can corrupt the database (an app crash cannot).
+        sqlite3_exec(db, "PRAGMA synchronous = OFF", nil, nil, nil)
         createActorTablesIfNeeded()
     }
 

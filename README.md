@@ -62,7 +62,7 @@ videoindex serve -root /srv/media/ -db /srv/videoindex/videos.db -listen :8080
 | Flag | Env var | Default | |
 |---|---|---|---|
 | `-root` | `VIDEOINDEX_ROOT` | (required) | media root; DB filenames are relative to it |
-| `-db` | `VIDEOINDEX_DB` | (required) | SQLite index file (created if missing) |
+| `-db` | `VIDEOINDEX_DB` | `<root>/videoindex.db` | SQLite index file (created if missing) |
 | `-listen` | `VIDEOINDEX_LISTEN` | `:8080` | HTTP listen address |
 | `-thumbs` | `VIDEOINDEX_THUMBS` | `<root>/Thumbs` | thumbnail cache directory |
 | `-auth` | `VIDEOINDEX_AUTH` | (off) | require HTTP basic auth, `user:password` |

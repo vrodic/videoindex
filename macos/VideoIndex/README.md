@@ -16,7 +16,7 @@ since the `mpv` formula depends on `ffmpeg`; if not, `brew install ffmpeg`.
 
 ```bash
 swift build -c release
-.build/release/VideoIndex /path/to/media/root /path/to/index.db
+.build/release/VideoIndex /path/to/media/root [/path/to/index.db]   # default: <root>/videoindex.db
 ```
 
 You can also just open the folder in Xcode (File ▸ Open, pick this
