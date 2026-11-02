@@ -189,7 +189,10 @@ Viewed, Width and Density (`file_size / (duration × width)`, a rough bitrate
 per pixel).
 
 - **Sorting:** click a header to sort; click it again to reverse. Press `r`
-  to reload the query and clear the sort.
+  or the **Reset Sort** button to clear the sort and reload the query.
+- **Search and condition** are kept in the page URL (`?search=…&cond=…`), so
+  a link reopens the same view, and in localStorage, so a plain visit picks
+  up where the last one left off.
 - **✓ column:** ticks rows for bulk actor assignment. Click its header to
   tick or untick all.
 - **Row tints:** blue rows have been watched before. Green rows were played
@@ -405,7 +408,7 @@ Mostly the same as mpv:
 | `Space` | tick / untick row |
 | `/` or `⌘F` / `Ctrl+F` | focus search |
 | `c` or `⌘L` / `Ctrl+L` | focus SQL condition |
-| `r` | reload, clear sort |
+| `r` | reset sort (clear column sort, reload) |
 | `w` or `⌘K` | word cloud |
 | `d` | dashboard |
 | `o` | player options |

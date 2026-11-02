@@ -101,6 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewMenu = NSMenu(title: "View")
         let dashboardItem = NSMenuItem(title: "Dashboard...", action: Selector(("openDashboard:")), keyEquivalent: "d")
         viewMenu.addItem(dashboardItem)
+        viewMenu.addItem(NSMenuItem.separator())
+        let resetSortItem = NSMenuItem(title: "Reset Sort", action: Selector(("resetSort:")), keyEquivalent: "R")
+        viewMenu.addItem(resetSortItem)
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 

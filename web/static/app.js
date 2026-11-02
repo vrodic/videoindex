@@ -38,11 +38,15 @@ const COLUMNS = [
 
 const ROW_H = 26;
 
+// Search and condition come from the URL first (so a link reopens the same
+// view), then from what was last used in this browser.
+const urlParams = new URLSearchParams(location.search);
+
 export const state = {
   items: [],
   sel: -1,
-  search: '',
-  cond: store('cond') ?? DEFAULT_CONDITIONS[0],
+  search: urlParams.get('search') ?? store('search') ?? '',
+  cond: urlParams.get('cond') ?? store('cond') ?? DEFAULT_CONDITIONS[0],
   sort: null,               // { key, asc }
   checked: new Set(),       // ids ticked in the ✓ column
   session: new Set(),       // ids played this session
@@ -68,6 +72,7 @@ export async function reload({ keepSelection = true } = {}) {
   const seq = ++loadSeq;
   const prevId = keepSelection ? ctx.current()?.id : null;
   const qs = new URLSearchParams({ search: state.search, cond: state.cond });
+  saveQueryState();
   let data;
   try {
     data = await api('/api/items?' + qs);
@@ -85,6 +90,17 @@ export async function reload({ keepSelection = true } = {}) {
   if (idx < 0 && state.items.length) idx = Math.min(Math.max(state.sel, 0), state.items.length - 1);
   if (prevId == null || idx < 0) $('tbody').scrollTop = 0;
   select(state.items.length ? idx : -1, { force: true });
+}
+
+// Mirror the current search / condition into the address bar and storage.
+function saveQueryState() {
+  store('search', state.search);
+  store('cond', state.cond);
+  const qs = new URLSearchParams();
+  if (state.search) qs.set('search', state.search);
+  qs.set('cond', state.cond);
+  const url = location.pathname + '?' + qs + location.hash;
+  if (url !== location.pathname + location.search + location.hash) history.replaceState(null, '', url);
 }
 
 function setStatus(text, error) {
@@ -126,7 +142,14 @@ function onHeaderClick(col) {
   selectById(id, { force: true });
 }
 
+function resetSort() {
+  state.sort = null;
+  renderHeader();
+  reload();
+}
+
 function renderHeader() {
+  $('btn-reset-sort').disabled = !state.sort;
   $('thead').innerHTML = COLUMNS.map((c) => {
     const sorted = state.sort?.key === c.id;
     return `<div data-col="${c.id}" class="${c.cls || ''}${sorted ? ' sorted' + (state.sort.asc ? '' : ' desc') : ''}">${esc(c.title)}</div>`;
@@ -358,7 +381,6 @@ export function setCondition(cond, { fromHistory = true } = {}) {
   state.cond = cond;
   state.condSaved = fromHistory;
   $('cond').value = cond;
-  store('cond', cond);
   reload();
 }
 
@@ -396,7 +418,6 @@ function initConditionBox() {
     t = setTimeout(() => {
       state.cond = input.value;
       state.condSaved = false;
-      store('cond', state.cond);
       reload();
     }, 250);
   });
@@ -508,7 +529,7 @@ function onGlobalKey(e) {
     c: () => { $('cond').focus(); $('cond').select(); },
     w: () => openWordCloud(ctx),
     d: () => openDashboard(ctx),
-    r: () => { state.sort = null; renderHeader(); reload(); },
+    r: () => resetSort(),
     o: () => openOptions(),
     '?': () => openHelp(),
   }[e.key];
@@ -557,6 +578,8 @@ async function init() {
     if (e.key === 'ArrowDown') { e.preventDefault(); ctx.focusTable(); }
   });
 
+  $('search').value = state.search;
+  $('btn-reset-sort').addEventListener('click', () => { resetSort(); ctx.focusTable(); });
   $('btn-words').addEventListener('click', () => openWordCloud(ctx));
   $('btn-dashboard').addEventListener('click', () => openDashboard(ctx));
   $('btn-scan').addEventListener('click', () => openScan(ctx));

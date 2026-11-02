@@ -53,7 +53,7 @@ export function openHelp() {
         ['Space', 'Tick / untick the row (for assigning actors)'],
         ['/ ⌘F', 'Search filename'],
         ['c ⌘L', 'Edit SQL condition'],
-        ['r', 'Reload query (clears column sort)'],
+        ['r', 'Reset sort: clear column sort and reload'],
         ['w ⌘K', 'Word cloud'],
         ['d', 'Dashboard'],
         ['o', 'Player options'],

@@ -61,6 +61,8 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     ]
 
     private let customConditionsKey = "CustomConditions"
+    private let lastSearchTermKey = "LastSearchTerm"
+    private let lastConditionKey = "LastCondition"
     private var savedCustomConditions: [String] {
         get {
             UserDefaults.standard.stringArray(forKey: customConditionsKey) ?? []
@@ -221,6 +223,11 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         self.db = Database(path: indexFile)
         self.conditionExpression = "AND like > 2 ORDER BY viewed_time, random() -- (Default: Highly liked, oldest viewed first)"
         super.init(nibName: nil, bundle: nil)
+        // Reopen with whatever search and condition were last used.
+        searchTerm = UserDefaults.standard.string(forKey: lastSearchTermKey) ?? ""
+        if let saved = UserDefaults.standard.string(forKey: lastConditionKey) {
+            conditionExpression = saved
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -235,6 +242,7 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
     override func viewDidLoad() {
         super.viewDidLoad()
         conditionField.stringValue = conditionExpression
+        searchField.stringValue = searchTerm
         reload()
         view.window?.makeFirstResponder(tableView)
     }
@@ -1027,6 +1035,8 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
 
     private func reload() {
         checkedItemIDs.removeAll()
+        UserDefaults.standard.set(searchTerm, forKey: lastSearchTermKey)
+        UserDefaults.standard.set(conditionExpression, forKey: lastConditionKey)
         let result = db.loadItems(search: searchTerm, conditionExpression: conditionExpression)
         items = result.items
         lastQuerySucceeded = (result.errorMessage == nil)
@@ -1504,6 +1514,12 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
         reload()
     }
 
+    /// Drops any column-header sort so the list is back in the condition's
+    /// own ORDER BY order.
+    @objc func resetSort(_ sender: Any?) {
+        reloadQuery(sender)
+    }
+
     @objc func focusSearchField(_ sender: Any?) {
         view.window?.makeFirstResponder(searchField)
     }
@@ -1578,6 +1594,10 @@ final class PlayerViewController: NSViewController, NSMenuItemValidation, NSComb
             action == Selector(("selectFirstItem:")) ||
             action == Selector(("selectLastItem:")) {
             return isTableViewFocused()
+        }
+
+        if action == Selector(("resetSort:")) {
+            return !tableView.sortDescriptors.isEmpty
         }
 
         if action == Selector(("toggleSaveThumbnailsToDisk:")) {

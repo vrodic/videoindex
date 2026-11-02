@@ -61,6 +61,7 @@ button {
   padding: 4px 10px; cursor: pointer; white-space: nowrap;
 }
 button:hover { background: var(--panel-2); }
+button:disabled { opacity: 0.45; cursor: default; background: var(--panel); }
 button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 input[type=text], input[type=search], input:not([type]), select {
   background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; min-width: 0;
