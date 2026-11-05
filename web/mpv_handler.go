@@ -103,6 +103,22 @@ def main():
             log(f"Error: mpv binary not found at '{mpv_bin}' or on PATH")
         file_exists = os.path.exists(target)
         log(f"Target file exists check: {file_exists} ({target})")
+
+        # Explicitly attempt to read a byte from the target to trigger the macOS TCC
+        # permission prompt dialog if network/removable volumes permission is pending.
+        try:
+            with open(target, "rb") as f:
+                f.read(1)
+            log("Read test successful: permission granted")
+        except PermissionError as e:
+            log(f"PermissionError opening target directly: {e}")
+            if sys.platform == "darwin":
+                # Show an informative dialog to prompt the user
+                msg = f"mpv-handler needs permission to access files on network volumes.\\n\\nPlease allow it in System Settings → Privacy & Security → Files and Folders (or Full Disk Access)."
+                subprocess.run(["osascript", "-e", f'display alert "Disk Access Needed" message "{msg}" as critical'])
+        except Exception as e:
+            log(f"Check open warning: {e}")
+
         cmd = [mpv_bin] + args + ["--", target]
         log(f"Executing: {cmd}")
         try:
@@ -164,13 +180,20 @@ end open location
 		log.Fatal(err)
 	}
 
-	// Update Info.plist with CFBundleURLTypes
+	// Update Info.plist with CFBundleURLTypes and TCC permission usage descriptions.
+	// Without NSNetworkVolumesUsageDescription, macOS automatically rejects file access
+	// on network/SMB shares with "Operation not permitted" without showing the user permission prompt.
 	plistPath := filepath.Join(appDir, "Contents", "Info.plist")
 	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes array", plistPath).Run()
 	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0 dict", plistPath).Run()
 	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0:CFBundleURLName string 'mpv URL'", plistPath).Run()
 	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0:CFBundleURLSchemes array", plistPath).Run()
 	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string 'mpv'", plistPath).Run()
+
+	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :NSNetworkVolumesUsageDescription string 'videoindex needs access to network volumes to play media in mpv'", plistPath).Run()
+	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :NSRemovableVolumesUsageDescription string 'videoindex needs access to removable volumes to play media in mpv'", plistPath).Run()
+	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :NSDocumentsFolderUsageDescription string 'videoindex needs access to documents to play media in mpv'", plistPath).Run()
+	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :NSDownloadsFolderUsageDescription string 'videoindex needs access to downloads to play media in mpv'", plistPath).Run()
 
 	// Register with macOS Launch Services
 	exec.Command("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", "-f", appDir).Run()
