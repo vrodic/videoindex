@@ -123,6 +123,8 @@ function fallback(reason) {
 }
 
 async function openItem(id, startPercent) {
+  clearTimeout(keySeekTimer);
+  keySeekTarget = null;
   let it;
   try {
     it = await api(`/api/media/${id}`);
@@ -146,6 +148,8 @@ async function openItem(id, startPercent) {
 }
 
 function closePlayer() {
+  clearTimeout(keySeekTimer);
+  keySeekTarget = null;
   const v = video();
   v.pause();
   v.removeAttribute('src');
@@ -159,13 +163,42 @@ function closePlayer() {
   osd('Close this window to return to the list', 4000);
 }
 
-function seekTo(t) {
+let keySeekTimer = 0;
+let keySeekTarget = null;
+
+function seekTo(t, { fast = false } = {}) {
   if (!item) return;
   const v = video();
   t = Math.max(0, Math.min(t, duration() - 0.5));
-  if (mode === 'direct') v.currentTime = t;
-  else load(t, { paused: v.paused });
+  if (mode === 'direct') {
+    if (fast && typeof v.fastSeek === 'function') {
+      try {
+        v.fastSeek(t);
+      } catch {
+        v.currentTime = t;
+      }
+    } else {
+      v.currentTime = t;
+    }
+  } else {
+    load(t, { paused: v.paused });
+  }
   updateBar();
+}
+
+function queueRelativeSeek(delta) {
+  if (!item) return;
+  const d = duration();
+  const base = keySeekTarget !== null ? keySeekTarget : position();
+  keySeekTarget = Math.max(0, Math.min(base + delta, d - 0.5));
+  osd(fmt(keySeekTarget) + ' / ' + fmt(d));
+  updateBar();
+  clearTimeout(keySeekTimer);
+  keySeekTimer = setTimeout(() => {
+    const target = keySeekTarget;
+    keySeekTarget = null;
+    seekTo(target, { fast: true });
+  }, 40);
 }
 
 // --- rotation ------------------------------------------------------------------
@@ -279,7 +312,7 @@ function poke() {
 function updateBar() {
   const v = video();
   const d = duration();
-  const p = position();
+  const p = keySeekTarget !== null ? keySeekTarget : position();
   $('pl-time').textContent = fmt(p);
   $('pl-dur').textContent = fmt(d);
   $('pl-fill').style.width = d ? (p / d) * 100 + '%' : '0';
@@ -334,13 +367,17 @@ function onKey(e) {
   const volStep = (d) => { setOpt('volume', opts.volume + d); osd(`Volume ${opts.volume}%`); };
   const actions = {
     ' ': togglePause, k: togglePause, p: togglePause,
-    ArrowLeft: () => seekTo(p - (e.shiftKey ? 1 : 5)),
-    ArrowRight: () => seekTo(p + (e.shiftKey ? 1 : 5)),
-    ArrowUp: () => seekTo(p + 60),
-    ArrowDown: () => seekTo(p - 60),
-    PageUp: () => seekTo(p + duration() / 10),
-    PageDown: () => seekTo(p - duration() / 10),
-    Home: () => seekTo(0),
+    ArrowLeft: () => queueRelativeSeek(-(e.shiftKey ? 1 : 5)),
+    ArrowRight: () => queueRelativeSeek(e.shiftKey ? 1 : 5),
+    ArrowUp: () => queueRelativeSeek(60),
+    ArrowDown: () => queueRelativeSeek(-60),
+    PageUp: () => queueRelativeSeek(duration() / 10),
+    PageDown: () => queueRelativeSeek(-duration() / 10),
+    Home: () => {
+      clearTimeout(keySeekTimer);
+      keySeekTarget = null;
+      seekTo(0, { fast: true });
+    },
     '9': () => volStep(-2), '/': () => volStep(-2),
     '0': () => volStep(2), '*': () => volStep(2),
     m: () => setOpt('mute', !opts.mute, opts.mute ? 'Unmuted' : 'Muted'),
@@ -417,7 +454,14 @@ function init() {
     hover.style.left = (e.clientX - seek.getBoundingClientRect().left) + 'px';
     if (dragging) $('pl-fill').style.width = (t / duration()) * 100 + '%';
   });
-  seek.addEventListener('pointerup', (e) => { if (dragging) { dragging = false; seekTo(seekFromEvent(e)); } });
+  seek.addEventListener('pointerup', (e) => {
+    if (dragging) {
+      dragging = false;
+      clearTimeout(keySeekTimer);
+      keySeekTarget = null;
+      seekTo(seekFromEvent(e), { fast: true });
+    }
+  });
 
   const q = new URLSearchParams(location.search);
   if (q.get('id')) openItem(+q.get('id'), +q.get('start') || 0);
