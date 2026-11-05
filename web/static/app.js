@@ -362,8 +362,38 @@ window.addEventListener('message', (e) => {
   }
 });
 
+function launchMpv(item, startPercent, prefix) {
+  let p = prefix ? prefix.replace(/\/+$/, '') : '';
+  const rel = (item.filename || '').replace(/^\/+/, '');
+  const fullPath = p ? `${p}/${rel}` : rel;
+  const qs = new URLSearchParams();
+  qs.set('url', fullPath);
+  if (startPercent && startPercent > 0) qs.set('start', `${startPercent}%`);
+  qs.set('volume', '33');
+  qs.set('volume-max', '1000');
+  qs.set('autofit', '75%x75%');
+  const uri = `mpv://play/?${qs.toString()}`;
+  let link = document.getElementById('mpv-launcher');
+  if (!link) {
+    link = document.createElement('a');
+    link.id = 'mpv-launcher';
+    link.style.display = 'none';
+    document.body.appendChild(link);
+  }
+  link.href = uri;
+  link.click();
+  setStatus(`Launching MPV: ${fullPath}`, false);
+}
+
 async function playItem(item, startPercent) {
-  if (!item || !openPlayer(item, startPercent)) return;
+  if (!item) return;
+  const opts = playerOptions();
+  const useMpv = opts.mpvMode === 'all' || (opts.mpvMode === 'transcode' && item.need !== 'direct');
+  if (useMpv) {
+    launchMpv(item, startPercent, opts.mpvPrefix);
+  } else {
+    if (!openPlayer(item, startPercent)) return;
+  }
   try {
     const r = await api(`/api/media/${item.id}/viewed`, { method: 'POST' });
     item.views = r.views;

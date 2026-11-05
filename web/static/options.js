@@ -12,6 +12,8 @@ export const DEFAULT_OPTIONS = {
   windowSize: 75,    // player window size, % of the screen
   inline: false,     // play in the list window instead of a pop-up
   speed: 1,
+  mpvMode: 'off',    // 'off' | 'transcode' | 'all'
+  mpvPrefix: '/Volumes/root', // SMB / local mount path prefix
 };
 
 export function playerOptions() {

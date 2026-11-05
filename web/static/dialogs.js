@@ -1,6 +1,7 @@
 // Player options (the old MPV menu) and the keyboard help.
 import { openModal } from './modal.js';
 import { playerOptions, savePlayerOptions, DEFAULT_OPTIONS } from './options.js';
+import { esc } from './util.js';
 
 export function openOptions() {
   const body = openModal('Player Options', { small: true });
@@ -22,6 +23,10 @@ export function openOptions() {
       <span></span>${chk('loop', 'Loop video')}
       <span></span>${chk('keepOpen', 'Keep player open when the video ends')}
       <span></span>${chk('autoNext', 'Play the next row when the video ends')}
+      <label for="mpvMode">External player (MPV)</label>
+      ${sel('mpvMode', [['off', 'Off (play in browser)'], ['transcode', 'Videos needing transcode/remux only'], ['all', 'All videos']], o.mpvMode || 'off')}
+      <label for="mpvPrefix">MPV / SMB path prefix</label>
+      <input type="text" id="mpvPrefix" value="${esc(o.mpvPrefix || '/Volumes/root')}" placeholder="/Volumes/root">
     </div>
     <div class="toolbar"><button id="opt-reset">Reset to defaults</button></div>
     <p style="margin:0;color:var(--muted);font-size:12px">Saved in this browser.</p>`;
@@ -32,6 +37,7 @@ export function openOptions() {
       volume: +q('volume').value, boost: q('boost').checked, windowSize: +q('windowSize').value, speed: +q('speed').value,
       mute: q('mute').checked, noAudio: q('noAudio').checked, loop: q('loop').checked,
       keepOpen: q('keepOpen').checked, autoNext: q('autoNext').checked, inline: q('inline').checked,
+      mpvMode: q('mpvMode').value, mpvPrefix: q('mpvPrefix').value.trim(),
     });
   };
   body.addEventListener('change', save);

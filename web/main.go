@@ -24,6 +24,7 @@ func usage() {
   videoindex serve [flags]   run the web UI / video server
   videoindex scan  [flags]   probe new files under the root into the database
   videoindex firefox-setup   hide Firefox's address bar in the player window
+  videoindex mpv-setup       register mpv:// URL handler for launching mpv locally
 
 Run "videoindex <command> -h" for the flags of each command.
 Every flag can also be set through an environment variable (shown in -h).
@@ -42,6 +43,8 @@ func main() {
 		scanCmd(os.Args[2:])
 	case "firefox-setup":
 		firefoxSetupCmd(os.Args[2:])
+	case "mpv-setup":
+		mpvSetupCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
