@@ -50,7 +50,7 @@ videoindex serve -root /Volumes/root/mnt/stuff/videos -db videos.db
 Then open <http://localhost:8080>.
 
 Filenames in the database are **relative to `-root`**. To move the library
-to another machine, copy `xv.db` and point `-root` at the new location.
+to another machine, copy `videos.db` and point `-root` at the new location.
 Nothing in the database needs to change. For example, on a Linux server:
 
 ```bash
