@@ -373,6 +373,7 @@ function launchMpv(item, startPercent, prefix) {
   qs.set('volume-max', '1000');
   qs.set('autofit', '75%x75%');
   const uri = `mpv://play/?${qs.toString()}`;
+  console.info('Launching MPV:', { uri, fullPath, item, prefix });
   let link = document.getElementById('mpv-launcher');
   if (!link) {
     link = document.createElement('a');

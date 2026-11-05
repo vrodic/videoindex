@@ -44,11 +44,22 @@ web viewer with local or SMB mounts.
 }
 
 const handlerPythonScript = `#!/usr/bin/env python3
+import datetime
 import os
 import shutil
 import subprocess
 import sys
 import urllib.parse
+
+LOG_PATH = os.path.expanduser("~/Library/Logs/videoindex-mpv-handler.log") if sys.platform == "darwin" else "/tmp/videoindex-mpv-handler.log"
+
+def log(msg):
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        with open(LOG_PATH, "a") as f:
+            f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
+    except Exception:
+        pass
 
 def find_mpv():
     path = shutil.which("mpv")
@@ -60,7 +71,9 @@ def find_mpv():
     return "mpv"
 
 def main():
+    log(f"Invoked with sys.argv: {sys.argv}")
     if len(sys.argv) < 2:
+        log("Error: No arguments passed to handler")
         return
     raw = sys.argv[1]
     target = ""
@@ -81,10 +94,22 @@ def main():
     elif raw.startswith("mpv://"):
         target = urllib.parse.unquote(raw[len("mpv://"):])
 
+    log(f"Parsed target: '{target}', args: {args}")
+
     if target:
         mpv_bin = find_mpv()
+        log(f"Using mpv binary: {mpv_bin}")
+        if not shutil.which(mpv_bin) and not os.path.isfile(mpv_bin):
+            log(f"Error: mpv binary not found at '{mpv_bin}' or on PATH")
         cmd = [mpv_bin] + args + ["--", target]
-        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        log(f"Executing: {cmd}")
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            log(f"Started mpv pid={proc.pid}")
+        except Exception as e:
+            log(f"Exception running mpv: {e}")
+    else:
+        log("Error: target URL is empty")
 
 if __name__ == "__main__":
     main()
