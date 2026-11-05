@@ -38,16 +38,40 @@ const COLUMNS = [
 
 const ROW_H = 26;
 
-// Search and condition come from the URL first (so a link reopens the same
-// view), then from what was last used in this browser.
+// Search, condition, sort, and selected ID come from the URL first (so a link
+// reopens the same view), then from what was last used in this browser.
 const urlParams = new URLSearchParams(location.search);
+
+function parseSort(str) {
+  if (!str) return null;
+  const [key, dir] = str.split(':');
+  if (!key || !COLUMNS.some((c) => c.id === key && c.id !== 'select')) return null;
+  return { key, asc: dir !== 'desc' };
+}
+
+function parseInitialId() {
+  const param = urlParams.get('id');
+  if (param != null) {
+    const n = Number(param);
+    if (!Number.isNaN(n)) return n;
+  }
+  const saved = store('selectedId');
+  if (saved != null) {
+    const n = Number(saved);
+    if (!Number.isNaN(n)) return n;
+  }
+  return null;
+}
+
+const initialSort = parseSort(urlParams.get('sort')) ?? store('sort') ?? null;
+let targetInitialId = parseInitialId();
 
 export const state = {
   items: [],
   sel: -1,
   search: urlParams.get('search') ?? store('search') ?? '',
   cond: urlParams.get('cond') ?? store('cond') ?? DEFAULT_CONDITIONS[0],
-  sort: null,               // { key, asc }
+  sort: initialSort,        // { key, asc }
   checked: new Set(),       // ids ticked in the ✓ column
   session: new Set(),       // ids played this session
   missing: new Set(),       // ids whose file is gone
@@ -70,7 +94,8 @@ export const ctx = {
 let loadSeq = 0;
 export async function reload({ keepSelection = true } = {}) {
   const seq = ++loadSeq;
-  const prevId = keepSelection ? ctx.current()?.id : null;
+  const prevId = keepSelection ? (ctx.current()?.id ?? targetInitialId) : null;
+  targetInitialId = null;
   const qs = new URLSearchParams({ search: state.search, cond: state.cond });
   saveQueryState();
   let data;
@@ -92,13 +117,18 @@ export async function reload({ keepSelection = true } = {}) {
   select(state.items.length ? idx : -1, { force: true });
 }
 
-// Mirror the current search / condition into the address bar and storage.
+// Mirror the current search / condition / sort / selected ID into the address bar and storage.
 function saveQueryState() {
   store('search', state.search);
   store('cond', state.cond);
+  if (state.sort) store('sort', state.sort);
+  else store('sort', null);
   const qs = new URLSearchParams();
   if (state.search) qs.set('search', state.search);
   qs.set('cond', state.cond);
+  if (state.sort) qs.set('sort', `${state.sort.key}:${state.sort.asc ? 'asc' : 'desc'}`);
+  const cur = ctx.current();
+  if (cur?.id != null) qs.set('id', cur.id);
   const url = location.pathname + '?' + qs + location.hash;
   if (url !== location.pathname + location.search + location.hash) history.replaceState(null, '', url);
 }
@@ -139,12 +169,14 @@ function onHeaderClick(col) {
   state.sort = state.sort?.key === col.id ? { key: col.id, asc: !state.sort.asc } : { key: col.id, asc: true };
   sortItems();
   renderHeader();
+  saveQueryState();
   selectById(id, { force: true });
 }
 
 function resetSort() {
   state.sort = null;
   renderHeader();
+  saveQueryState();
   reload();
 }
 
@@ -228,6 +260,7 @@ export function select(i, { force = false } = {}) {
     checkAndSaveCustomCondition();
     refreshPreview();
     refreshMediaActors();
+    saveQueryState();
   }
 }
 
@@ -381,6 +414,10 @@ export function setCondition(cond, { fromHistory = true } = {}) {
   state.cond = cond;
   state.condSaved = fromHistory;
   $('cond').value = cond;
+  if (state.sort) {
+    state.sort = null;
+    renderHeader();
+  }
   reload();
 }
 
@@ -418,11 +455,25 @@ function initConditionBox() {
     t = setTimeout(() => {
       state.cond = input.value;
       state.condSaved = false;
+      if (state.sort) {
+        state.sort = null;
+        renderHeader();
+      }
       reload();
     }, 250);
   });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { clearTimeout(t); state.cond = input.value; state.condSaved = false; reload(); ctx.focusTable(); }
+    if (e.key === 'Enter') {
+      clearTimeout(t);
+      state.cond = input.value;
+      state.condSaved = false;
+      if (state.sort) {
+        state.sort = null;
+        renderHeader();
+      }
+      reload();
+      ctx.focusTable();
+    }
     if (e.key === 'ArrowDown' && e.altKey) { toggleList(true); }
   });
   const toggleList = (show = list.hidden) => {
@@ -590,6 +641,14 @@ async function init() {
   initSplitter();
   initPreview(ctx);
   initActors(ctx);
+
+  const saveSelectedId = () => {
+    const cur = ctx.current();
+    if (cur?.id != null) store('selectedId', cur.id);
+  };
+  window.addEventListener('beforeunload', saveSelectedId);
+  window.addEventListener('pagehide', saveSelectedId);
+
   await reload();
   ctx.focusTable();
 }
