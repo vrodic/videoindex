@@ -129,46 +129,41 @@ func setupDarwin(remove bool) {
 		return
 	}
 
-	contents := filepath.Join(appDir, "Contents")
-	macos := filepath.Join(contents, "MacOS")
-	if err := os.MkdirAll(macos, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(appDir), 0o755); err != nil {
 		log.Fatal(err)
 	}
+	_ = os.RemoveAll(appDir)
 
-	plist := `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleIdentifier</key>
-    <string>org.videoindex.mpv-handler</string>
-    <key>CFBundleName</key>
-    <string>mpv-handler</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleExecutable</key>
-    <string>mpv-handler</string>
-    <key>CFBundleURLTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleURLName</key>
-            <string>mpv URL</string>
-            <key>CFBundleURLSchemes</key>
-            <array>
-                <string>mpv</string>
-            </array>
-        </dict>
-    </array>
-</dict>
-</plist>
+	// In macOS, LaunchServices delivers custom URL scheme activations via AppleEvents
+	// (kAEGetURL), NOT CLI arguments in sys.argv. An AppleScript application bundle
+	// with "on open location this_URL" intercepts the AppleEvent and delegates the URL
+	// to our Python runner.
+	appleScript := `on open location this_URL
+    set scriptPath to (POSIX path of (path to me)) & "Contents/Resources/run.py"
+    do shell script "python3 " & quoted form of scriptPath & " " & quoted form of this_URL & " >/dev/null 2>&1 &"
+end open location
 `
-	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), []byte(plist), 0o644); err != nil {
+	cmd := exec.Command("osacompile", "-o", appDir, "-e", appleScript)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Fatalf("osacompile failed: %v %s", err, string(out))
+	}
+
+	resourcesDir := filepath.Join(appDir, "Contents", "Resources")
+	if err := os.MkdirAll(resourcesDir, 0o755); err != nil {
+		log.Fatal(err)
+	}
+	scriptPath := filepath.Join(resourcesDir, "run.py")
+	if err := os.WriteFile(scriptPath, []byte(handlerPythonScript), 0o755); err != nil {
 		log.Fatal(err)
 	}
 
-	binPath := filepath.Join(macos, "mpv-handler")
-	if err := os.WriteFile(binPath, []byte(handlerPythonScript), 0o755); err != nil {
-		log.Fatal(err)
-	}
+	// Update Info.plist with CFBundleURLTypes
+	plistPath := filepath.Join(appDir, "Contents", "Info.plist")
+	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes array", plistPath).Run()
+	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0 dict", plistPath).Run()
+	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0:CFBundleURLName string 'mpv URL'", plistPath).Run()
+	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0:CFBundleURLSchemes array", plistPath).Run()
+	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string 'mpv'", plistPath).Run()
 
 	// Register with macOS Launch Services
 	exec.Command("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", "-f", appDir).Run()
