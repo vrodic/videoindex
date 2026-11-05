@@ -13,9 +13,9 @@ import (
 // "videoindex mpv-setup" configures an mpv:// URL handler on macOS or Linux
 // so clicking an item or thumbnail in the web viewer can launch mpv locally.
 //
-// On macOS, it creates a lightweight application bundle ~/Applications/mpv-handler.app
-// with CFBundleURLTypes registered for the "mpv" scheme, invoking mpv with the
-// requested filepath, start percentage, volume, etc.
+// On macOS, it builds a native Cocoa app bundle ~/Applications/mpv-handler.app
+// with CFBundleURLTypes registered for the "mpv" scheme and TCC usage descriptions
+// for network and disk volumes.
 // On Linux, it installs an ~/.local/share/applications/mpv-handler.desktop file
 // and registers x-scheme-handler/mpv with xdg-mime.
 
@@ -43,99 +43,120 @@ web viewer with local or SMB mounts.
 	}
 }
 
-const handlerPythonScript = `#!/usr/bin/env python3
-import datetime
-import os
-import shutil
-import subprocess
-import sys
-import urllib.parse
+const darwinSwiftSource = `import Cocoa
 
-LOG_PATH = os.path.expanduser("~/Library/Logs/videoindex-mpv-handler.log") if sys.platform == "darwin" else "/tmp/videoindex-mpv-handler.log"
+func logMsg(_ msg: String) {
+    let path = ("~/Library/Logs/videoindex-mpv-handler.log" as NSString).expandingTildeInPath
+    let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(msg)\n"
+    if let data = line.data(using: .utf8) {
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.closeFile()
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path))
+        }
+    }
+}
 
-def log(msg):
-    try:
-        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        with open(LOG_PATH, "a") as f:
-            f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
-    except Exception:
-        pass
-
-def find_mpv():
-    path = shutil.which("mpv")
-    if path and os.path.isfile(path) and os.access(path, os.X_OK):
-        return path
-    for cand in ["/opt/homebrew/bin/mpv", "/usr/local/bin/mpv", "/usr/bin/mpv"]:
-        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+func findMpv() -> String {
+    for cand in ["/opt/homebrew/bin/mpv", "/usr/local/bin/mpv", "/usr/bin/mpv"] {
+        if FileManager.default.isExecutableFile(atPath: cand) {
             return cand
+        }
+    }
     return "mpv"
+}
 
-def main():
-    log(f"Invoked with sys.argv: {sys.argv}")
-    if len(sys.argv) < 2:
-        log("Error: No arguments passed to handler")
-        return
-    raw = sys.argv[1]
-    target = ""
-    args = []
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            handleURL(url.absoluteString)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            NSApp.terminate(nil)
+        }
+    }
 
-    if raw.startswith("mpv://play/?"):
-        query = raw[len("mpv://play/?"):]
-        qs = urllib.parse.parse_qs(query)
-        target = qs.get("url", [""])[0]
-        if "start" in qs:
-            args.append(f"--start={qs['start'][0]}")
-        if "volume" in qs:
-            args.append(f"--volume={qs['volume'][0]}")
-        if "volume-max" in qs:
-            args.append(f"--volume-max={qs['volume-max'][0]}")
-        if "autofit" in qs:
-            args.append(f"--autofit={qs['autofit'][0]}")
-    elif raw.startswith("mpv://"):
-        target = urllib.parse.unquote(raw[len("mpv://"):])
+    func handleURL(_ raw: String) {
+        logMsg("Received URL: \(raw)")
+        var target = ""
+        var args: [String] = []
 
-    log(f"Parsed target: '{target}', args: {args}")
+        if raw.hasPrefix("mpv://play/?") {
+            let qs = String(raw.dropFirst("mpv://play/?".count))
+            let comps = URLComponents(string: "http://dummy/?" + qs)
+            let items = comps?.queryItems ?? []
+            for item in items {
+                switch item.name {
+                case "url":
+                    target = item.value ?? ""
+                case "start":
+                    if let v = item.value { args.append("--start=\(v)") }
+                case "volume":
+                    if let v = item.value { args.append("--volume=\(v)") }
+                case "volume-max":
+                    if let v = item.value { args.append("--volume-max=\(v)") }
+                case "autofit":
+                    if let v = item.value { args.append("--autofit=\(v)") }
+                default:
+                    break
+                }
+            }
+        } else if raw.hasPrefix("mpv://") {
+            let encoded = String(raw.dropFirst("mpv://".count))
+            target = encoded.removingPercentEncoding ?? encoded
+        }
 
-    if target:
-        mpv_bin = find_mpv()
-        log(f"Using mpv binary: {mpv_bin}")
-        if not shutil.which(mpv_bin) and not os.path.isfile(mpv_bin):
-            log(f"Error: mpv binary not found at '{mpv_bin}' or on PATH")
-        file_exists = os.path.exists(target)
-        log(f"Target file exists check: {file_exists} ({target})")
+        guard !target.isEmpty else {
+            logMsg("Error: Target URL is empty")
+            return
+        }
 
-        # Explicitly attempt to read a byte from the target to trigger the macOS TCC
-        # permission prompt dialog if network/removable volumes permission is pending.
-        try:
-            with open(target, "rb") as f:
-                f.read(1)
-            log("Read test successful: permission granted")
-        except PermissionError as e:
-            log(f"PermissionError opening target directly: {e}")
-            if sys.platform == "darwin":
-                # Show an informative dialog to prompt the user
-                msg = f"mpv-handler needs permission to access files on network volumes.\\n\\nPlease allow it in System Settings → Privacy & Security → Files and Folders (or Full Disk Access)."
-                subprocess.run(["osascript", "-e", f'display alert "Disk Access Needed" message "{msg}" as critical'])
-        except Exception as e:
-            log(f"Check open warning: {e}")
+        logMsg("Checking file existence: \(target)")
+        let exists = FileManager.default.fileExists(atPath: target)
+        logMsg("File exists: \(exists)")
 
-        cmd = [mpv_bin] + args + ["--", target]
-        log(f"Executing: {cmd}")
-        try:
-            # Run mpv and capture output to log file so exit reasons / errors are visible
-            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            log(f"Started mpv pid={proc.pid}")
-            stdout, _ = proc.communicate()
-            if stdout:
-                log(f"mpv output:\n{stdout.strip()}")
-            log(f"mpv exited with code {proc.returncode}")
-        except Exception as e:
-            log(f"Exception running mpv: {e}")
-    else:
-        log("Error: target URL is empty")
+        // Attempt reading a byte to trigger the macOS TCC Network Volumes permission prompt
+        if let handle = FileHandle(forReadingAtPath: target) {
+            _ = handle.readData(ofLength: 1)
+            handle.closeFile()
+            logMsg("File access permitted by TCC")
+        } else {
+            logMsg("Warning: Unable to open file handle (may trigger TCC dialog or require permission in System Settings)")
+        }
 
-if __name__ == "__main__":
-    main()
+        let mpvBin = findMpv()
+        logMsg("Launching mpv binary: \(mpvBin) with args: \(args) for: \(target)")
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: mpvBin)
+        proc.arguments = args + ["--", target]
+        proc.standardInput = FileHandle.nullDevice
+
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+
+        do {
+            try proc.run()
+            logMsg("Started mpv pid=\(proc.processIdentifier)")
+            proc.waitUntilExit()
+            let outData = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let outStr = String(data: outData, encoding: .utf8), !outStr.isEmpty {
+                logMsg("mpv output:\n\(outStr.trimmingCharacters(in: .whitespacesAndNewlines))")
+            }
+            logMsg("mpv exited with code \(proc.terminationStatus)")
+        } catch {
+            logMsg("Failed to run mpv: \(error)")
+        }
+    }
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
 `
 
 func setupDarwin(remove bool) {
@@ -152,53 +173,69 @@ func setupDarwin(remove bool) {
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(appDir), 0o755); err != nil {
+	contents := filepath.Join(appDir, "Contents")
+	macos := filepath.Join(contents, "MacOS")
+	if err := os.MkdirAll(macos, 0o755); err != nil {
 		log.Fatal(err)
 	}
-	_ = os.RemoveAll(appDir)
 
-	// In macOS, LaunchServices delivers custom URL scheme activations via AppleEvents
-	// (kAEGetURL), NOT CLI arguments in sys.argv. An AppleScript application bundle
-	// with "on open location this_URL" intercepts the AppleEvent and delegates the URL
-	// to our Python runner.
-	appleScript := `on open location this_URL
-    set scriptPath to (POSIX path of (path to me)) & "Contents/Resources/run.py"
-    do shell script "python3 " & quoted form of scriptPath & " " & quoted form of this_URL & " >/dev/null 2>&1 &"
-end open location
-`
-	cmd := exec.Command("osacompile", "-o", appDir, "-e", appleScript)
+	// Write Swift source and compile native Cocoa application binary
+	tmpSwift := filepath.Join(os.TempDir(), "mpv_handler_main.swift")
+	if err := os.WriteFile(tmpSwift, []byte(darwinSwiftSource), 0o644); err != nil {
+		log.Fatal(err)
+	}
+	defer os.Remove(tmpSwift)
+
+	binPath := filepath.Join(macos, "mpv-handler")
+	cmd := exec.Command("swiftc", "-O", "-o", binPath, tmpSwift)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Fatalf("osacompile failed: %v %s", err, string(out))
+		log.Fatalf("swiftc failed: %v\n%s", err, string(out))
 	}
 
-	resourcesDir := filepath.Join(appDir, "Contents", "Resources")
-	if err := os.MkdirAll(resourcesDir, 0o755); err != nil {
+	plist := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>org.videoindex.mpv-handler</string>
+    <key>CFBundleName</key>
+    <string>mpv-handler</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>mpv-handler</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>mpv URL</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>mpv</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>videoindex needs access to network volumes to play media in mpv</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>videoindex needs access to removable volumes to play media in mpv</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>videoindex needs access to documents to play media in mpv</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>videoindex needs access to downloads to play media in mpv</string>
+</dict>
+</plist>
+`
+	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), []byte(plist), 0o644); err != nil {
 		log.Fatal(err)
 	}
-	scriptPath := filepath.Join(resourcesDir, "run.py")
-	if err := os.WriteFile(scriptPath, []byte(handlerPythonScript), 0o755); err != nil {
-		log.Fatal(err)
-	}
-
-	// Update Info.plist with CFBundleURLTypes and TCC permission usage descriptions.
-	// Without NSNetworkVolumesUsageDescription, macOS automatically rejects file access
-	// on network/SMB shares with "Operation not permitted" without showing the user permission prompt.
-	plistPath := filepath.Join(appDir, "Contents", "Info.plist")
-	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes array", plistPath).Run()
-	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0 dict", plistPath).Run()
-	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0:CFBundleURLName string 'mpv URL'", plistPath).Run()
-	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0:CFBundleURLSchemes array", plistPath).Run()
-	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string 'mpv'", plistPath).Run()
-
-	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :NSNetworkVolumesUsageDescription string 'videoindex needs access to network volumes to play media in mpv'", plistPath).Run()
-	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :NSRemovableVolumesUsageDescription string 'videoindex needs access to removable volumes to play media in mpv'", plistPath).Run()
-	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :NSDocumentsFolderUsageDescription string 'videoindex needs access to documents to play media in mpv'", plistPath).Run()
-	exec.Command("/usr/libexec/PlistBuddy", "-c", "Add :NSDownloadsFolderUsageDescription string 'videoindex needs access to downloads to play media in mpv'", plistPath).Run()
 
 	// Register with macOS Launch Services
 	exec.Command("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", "-f", appDir).Run()
 
-	fmt.Printf("Installed mpv URL handler at %s\nRegistered mpv:// protocol handler.\n", appDir)
+	fmt.Printf("Installed native mpv URL handler at %s\nRegistered mpv:// protocol handler.\n", appDir)
 }
 
 func setupLinux(remove bool) {
@@ -226,7 +263,67 @@ func setupLinux(remove bool) {
 		log.Fatal(err)
 	}
 
-	if err := os.WriteFile(binPath, []byte(handlerPythonScript), 0o755); err != nil {
+	linuxPythonScript := `#!/usr/bin/env python3
+import datetime
+import os
+import shutil
+import subprocess
+import sys
+import urllib.parse
+
+LOG_PATH = "/tmp/videoindex-mpv-handler.log"
+
+def log(msg):
+    try:
+        with open(LOG_PATH, "a") as f:
+            f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
+    except Exception:
+        pass
+
+def find_mpv():
+    path = shutil.which("mpv")
+    if path and os.path.isfile(path) and os.access(path, os.X_OK):
+        return path
+    for cand in ["/usr/bin/mpv", "/usr/local/bin/mpv"]:
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return "mpv"
+
+def main():
+    if len(sys.argv) < 2:
+        return
+    raw = sys.argv[1]
+    target = ""
+    args = []
+
+    if raw.startswith("mpv://play/?"):
+        query = raw[len("mpv://play/?"):]
+        qs = urllib.parse.parse_qs(query)
+        target = qs.get("url", [""])[0]
+        if "start" in qs:
+            args.append(f"--start={qs['start'][0]}")
+        if "volume" in qs:
+            args.append(f"--volume={qs['volume'][0]}")
+        if "volume-max" in qs:
+            args.append(f"--volume-max={qs['volume-max'][0]}")
+        if "autofit" in qs:
+            args.append(f"--autofit={qs['autofit'][0]}")
+    elif raw.startswith("mpv://"):
+        target = urllib.parse.unquote(raw[len("mpv://"):])
+
+    if target:
+        mpv_bin = find_mpv()
+        cmd = [mpv_bin] + args + ["--", target]
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        stdout, _ = proc.communicate()
+        if stdout:
+            log(f"mpv output:\n{stdout.strip()}")
+
+if __name__ == "__main__":
+    main()
+`
+
+	if err := os.WriteFile(binPath, []byte(linuxPythonScript), 0o755); err != nil {
 		log.Fatal(err)
 	}
 
