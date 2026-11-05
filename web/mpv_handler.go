@@ -89,8 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for item in items {
                 switch item.name {
                 case "url":
-                    let rawVal = item.value ?? ""
-                    target = rawVal.replacingOccurrences(of: "+", with: " ")
+                    target = item.value ?? ""
                 case "start":
                     if let v = item.value { args.append("--start=\(v)") }
                 case "volume":
@@ -105,8 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else if raw.hasPrefix("mpv://") {
             let encoded = String(raw.dropFirst("mpv://".count))
-            let unquoted = encoded.removingPercentEncoding ?? encoded
-            target = unquoted.replacingOccurrences(of: "+", with: " ")
+            target = encoded.removingPercentEncoding ?? encoded
         }
 
         guard !target.isEmpty else {
