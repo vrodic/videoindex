@@ -324,6 +324,25 @@ muted and unmutes on your first click or key press. In Firefox you can avoid
 this: click the permissions icon in the address bar and allow **Audio and
 Video** for the site.
 
+### Launching in local MPV (e.g. over SMB)
+
+If you use the web viewer from a client machine (e.g. macOS or Linux) and
+mount the video storage locally (for instance at `/Volumes/root`), you can have
+the web viewer launch `mpv` locally instead of playing in the browser:
+
+1. **Register the `mpv://` URL handler on your client machine:**
+   ```bash
+   videoindex mpv-setup
+   ```
+   (Run `videoindex mpv-setup -remove` to uninstall).
+2. **Configure in Player Options (`o` or Player ⚙):**
+   - **External player (MPV):** Choose `All videos` or `Videos needing transcode/remux only`.
+   - **MPV / SMB path prefix:** Enter your local mount path (e.g. `/Volumes/root`).
+
+Clicking a video or filmstrip frame will launch `mpv` on your client machine
+with `--volume=33`, `--volume-max=1000`, `--autofit=75%x75%` and `--start=<percent>%`
+while recording the view in the web index.
+
 ### How a video gets to the browser
 
 The server picks a delivery mode from the container and codec:
