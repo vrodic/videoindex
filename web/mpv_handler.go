@@ -123,19 +123,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         proc.executableURL = URL(fileURLWithPath: mpvBin)
         proc.arguments = args + ["--", target]
         proc.standardInput = FileHandle.nullDevice
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
 
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
+        proc.terminationHandler = { finished in
+            if finished.terminationStatus != 0 {
+                logMsg("mpv exited with error code \(finished.terminationStatus) for file \(target)\nCommand: \(mpvBin) \(args.joined(separator: " ")) -- \(target)")
+            }
+        }
 
         do {
             try proc.run()
-            proc.waitUntilExit()
-            if proc.terminationStatus != 0 {
-                let outData = pipe.fileHandleForReading.readDataToEndOfFile()
-                let outStr = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                logMsg("mpv exited with error code \(proc.terminationStatus) for file \(target)\nCommand: \(mpvBin) \(args.joined(separator: " ")) -- \(target)\nOutput:\n\(outStr)")
-            }
         } catch {
             logMsg("Failed to launch mpv: \(error) (binary: \(mpvBin), target: \(target))")
         }
@@ -307,10 +305,7 @@ def main():
         mpv_bin = find_mpv()
         cmd = [mpv_bin] + args + ["--", target]
         try:
-            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            stdout, _ = proc.communicate()
-            if proc.returncode != 0:
-                log(f"mpv exited with error code {proc.returncode} for file {target}\nCommand: {cmd}\nOutput:\n{stdout.strip()}")
+            subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
             log(f"Failed to launch mpv: {e} (cmd: {cmd})")
 
