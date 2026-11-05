@@ -101,11 +101,18 @@ def main():
         log(f"Using mpv binary: {mpv_bin}")
         if not shutil.which(mpv_bin) and not os.path.isfile(mpv_bin):
             log(f"Error: mpv binary not found at '{mpv_bin}' or on PATH")
+        file_exists = os.path.exists(target)
+        log(f"Target file exists check: {file_exists} ({target})")
         cmd = [mpv_bin] + args + ["--", target]
         log(f"Executing: {cmd}")
         try:
-            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            # Run mpv and capture output to log file so exit reasons / errors are visible
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             log(f"Started mpv pid={proc.pid}")
+            stdout, _ = proc.communicate()
+            if stdout:
+                log(f"mpv output:\n{stdout.strip()}")
+            log(f"mpv exited with code {proc.returncode}")
         except Exception as e:
             log(f"Exception running mpv: {e}")
     else:
