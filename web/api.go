@@ -102,7 +102,10 @@ func decodeBody(r *http.Request, v any) error {
 // --- handlers -------------------------------------------------------------
 
 func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"allowDelete": a.AllowDelete})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"allowDelete": a.AllowDelete,
+		"rootDir":     a.Root,
+	})
 }
 
 type itemOut struct {

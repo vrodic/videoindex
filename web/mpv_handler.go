@@ -79,7 +79,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func handleURL(_ raw: String) {
-        logMsg("Received URL: \(raw)")
         var target = ""
         var args: [String] = []
 
@@ -90,7 +89,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for item in items {
                 switch item.name {
                 case "url":
-                    target = item.value ?? ""
+                    let rawVal = item.value ?? ""
+                    target = rawVal.replacingOccurrences(of: "+", with: " ")
                 case "start":
                     if let v = item.value { args.append("--start=\(v)") }
                 case "volume":
@@ -105,30 +105,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else if raw.hasPrefix("mpv://") {
             let encoded = String(raw.dropFirst("mpv://".count))
-            target = encoded.removingPercentEncoding ?? encoded
+            let unquoted = encoded.removingPercentEncoding ?? encoded
+            target = unquoted.replacingOccurrences(of: "+", with: " ")
         }
 
         guard !target.isEmpty else {
-            logMsg("Error: Target URL is empty")
+            logMsg("Error: Target URL is empty (raw URL: \(raw))")
             return
         }
 
-        logMsg("Checking file existence: \(target)")
         let exists = FileManager.default.fileExists(atPath: target)
-        logMsg("File exists: \(exists)")
-
-        // Attempt reading a byte to trigger the macOS TCC Network Volumes permission prompt
-        if let handle = FileHandle(forReadingAtPath: target) {
-            _ = handle.readData(ofLength: 1)
-            handle.closeFile()
-            logMsg("File access permitted by TCC")
-        } else {
-            logMsg("Warning: Unable to open file handle (may trigger TCC dialog or require permission in System Settings)")
+        if !exists {
+            logMsg("Error: File not found at path: \(target)")
+            return
         }
 
         let mpvBin = findMpv()
-        logMsg("Launching mpv binary: \(mpvBin) with args: \(args) for: \(target)")
-
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: mpvBin)
         proc.arguments = args + ["--", target]
@@ -140,15 +132,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             try proc.run()
-            logMsg("Started mpv pid=\(proc.processIdentifier)")
             proc.waitUntilExit()
-            let outData = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let outStr = String(data: outData, encoding: .utf8), !outStr.isEmpty {
-                logMsg("mpv output:\n\(outStr.trimmingCharacters(in: .whitespacesAndNewlines))")
+            if proc.terminationStatus != 0 {
+                let outData = pipe.fileHandleForReading.readDataToEndOfFile()
+                let outStr = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                logMsg("mpv exited with error code \(proc.terminationStatus) for file \(target)\nCommand: \(mpvBin) \(args.joined(separator: " ")) -- \(target)\nOutput:\n\(outStr)")
             }
-            logMsg("mpv exited with code \(proc.terminationStatus)")
         } catch {
-            logMsg("Failed to run mpv: \(error)")
+            logMsg("Failed to launch mpv: \(error) (binary: \(mpvBin), target: \(target))")
         }
     }
 }
@@ -312,12 +303,18 @@ def main():
         target = urllib.parse.unquote(raw[len("mpv://"):])
 
     if target:
+        if not os.path.exists(target):
+            log(f"Error: File not found at path: {target}")
+            return
         mpv_bin = find_mpv()
         cmd = [mpv_bin] + args + ["--", target]
-        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        stdout, _ = proc.communicate()
-        if stdout:
-            log(f"mpv output:\n{stdout.strip()}")
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            stdout, _ = proc.communicate()
+            if proc.returncode != 0:
+                log(f"mpv exited with error code {proc.returncode} for file {target}\nCommand: {cmd}\nOutput:\n{stdout.strip()}")
+        except Exception as e:
+            log(f"Failed to launch mpv: {e} (cmd: {cmd})")
 
 if __name__ == "__main__":
     main()

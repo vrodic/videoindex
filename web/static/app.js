@@ -364,17 +364,31 @@ window.addEventListener('message', (e) => {
 
 function launchMpv(item, startPercent, prefix) {
   let p = prefix ? prefix.replace(/\/+$/, '') : '';
+  let root = (state.config?.rootDir || '').replace(/\/+$/, '');
   const rel = (item.filename || '').replace(/^\/+/, '');
-  const fullPath = p ? `${p}/${rel}` : rel;
+  let fullPath = rel;
+  if (p && root) {
+    // Combine SMB prefix + server rootDir + relative file path, avoiding duplicated slashes/paths
+    if (root.startsWith('/') && p.endsWith('/')) fullPath = `${p}${root.replace(/^\/+/, '')}/${rel}`;
+    else if (root.startsWith('/')) fullPath = `${p}/${root.replace(/^\/+/, '')}/${rel}`;
+    else fullPath = `${p}/${root}/${rel}`;
+  } else if (p) {
+    fullPath = `${p}/${rel}`;
+  } else if (root) {
+    fullPath = `${root}/${rel}`;
+  }
+
   const qs = new URLSearchParams();
   qs.set('url', fullPath);
   if (startPercent && startPercent > 0) qs.set('start', `${startPercent}%`);
   qs.set('volume', '33');
   qs.set('volume-max', '1000');
   qs.set('autofit', '75%x75%');
-  const uri = `mpv://play/?${qs.toString()}`;
-  console.log('[videoindex] Launching MPV:', uri, { fullPath, item, prefix });
-  console.info('Launching MPV:', { uri, fullPath, item, prefix });
+  // Replace '+' with '%20' so spaces in filenames are strictly percent-encoded
+  const queryString = qs.toString().replace(/\+/g, '%20');
+  const uri = `mpv://play/?${queryString}`;
+  console.log('[videoindex] Launching MPV:', uri, { fullPath, item, prefix, root });
+  console.info('Launching MPV:', { uri, fullPath, item, prefix, root });
   let link = document.getElementById('mpv-launcher');
   if (!link) {
     link = document.createElement('a');
